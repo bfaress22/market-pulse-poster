@@ -26,44 +26,11 @@ const POSITION_LABELS: Record<string, string> = {
   "bottom-right": "bottom-right corner",
 };
 
-function buildPrompt(opts: {
-  prompt: string;
-  style?: string;
-  mood?: string;
-  colors?: string[];
-  aspectRatio?: string;
-  textOverlay?: { text: string; position: string; weight?: string; color?: string };
-  wordmark?: { text: string; position: string };
-  margin?: number;
-}): string {
-  const parts: string[] = [];
-  parts.push(`Create a professional LinkedIn post image. Subject: ${opts.prompt}.`);
-  if (opts.aspectRatio) parts.push(`Aspect ratio: ${opts.aspectRatio}.`);
-  if (opts.style) parts.push(`Visual style: ${opts.style}.`);
-  if (opts.mood) parts.push(`Mood and atmosphere: ${opts.mood}.`);
-  if (opts.colors?.length) {
-    parts.push(`Strict color palette to use as dominant colors: ${opts.colors.join(", ")}. Do not introduce other strong hues.`);
-  }
-  if (opts.textOverlay?.text) {
-    const pos = POSITION_LABELS[opts.textOverlay.position] || "center";
-    const weight = opts.textOverlay.weight || "bold";
-    const color = opts.textOverlay.color ? ` in ${opts.textOverlay.color}` : "";
-    parts.push(
-      `Render this exact text on the image, perfectly legible, no typos, no extra words: "${opts.textOverlay.text}". ` +
-      `Place it at the ${pos} of the image. Use a ${weight} sans-serif typography${color}, with clean kerning and high contrast against the background.`
-    );
-  }
-  if (opts.wordmark?.text) {
-    const pos = POSITION_LABELS[opts.wordmark.position] || "bottom-center";
-    parts.push(`Add a small wordmark "${opts.wordmark.text}" at the ${pos}, discreet but readable.`);
-  }
-  if (opts.margin && opts.margin > 0) {
-    parts.push(`Keep a clean empty band of approximately ${opts.margin}% of the image height free of any subject element at the bottom.`);
-  }
-  parts.push(`Premium editorial quality, sharp composition, balanced negative space.`);
-  parts.push(`Strictly avoid: cartoonish artefacts, melting shapes, lens flares, garbled or distorted text, watermarks.`);
-  return parts.join(" ");
+function buildPrompt(opts: { prompt: string }): string {
+  const subject = (opts.prompt || "").trim();
+  return `Create a high-tech, sleek isometric 3D visualization or abstract data model illustrating the concept of ${subject} for a professional LinkedIn post. The visualization must be purely symbolic, using geometric shapes, connected data nodes, modules, glowing data streams, and dynamic, clean-line trend arrows. Use a professional color palette (corporate blues, golds, natural greens). Use premium materials like frosted glass, polished steel, and glowing holographic elements. CRITICAL INSTRUCTION: There must be absolutely NO text, NO labels, NO letters, and NO numbers anywhere on the image. The visualization must convey meaning solely through its forms, symbols, and interconnected structure. The perspective should be a clean isometric view against a sophisticated, subtle technical interface background.`;
 }
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
