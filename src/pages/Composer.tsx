@@ -353,6 +353,43 @@ const Composer = () => {
       <div className="grid lg:grid-cols-[1fr_400px] gap-6">
         {/* LEFT: editors */}
         <div className="space-y-6">
+          {/* QUICK generate: subject → text + image in parallel */}
+          <Card className="border-primary/40 bg-gradient-to-br from-primary/10 via-card/60 to-accent/10 backdrop-blur-xl">
+            <CardHeader className="border-b border-border/40">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Zap className="h-4 w-4 text-primary" /> Génération rapide
+                <Badge variant="secondary" className="ml-1 text-[10px]">texte + image en parallèle</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5 space-y-3">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Sujet du post</Label>
+              <Textarea
+                value={quickSubject}
+                onChange={(e) => setQuickSubject(e.target.value)}
+                placeholder="Ex : les tendances IA agentique en 2026 pour les startups B2B…"
+                rows={2}
+                className="bg-background/40"
+              />
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  onClick={() => quickGenerate.mutate()}
+                  disabled={busy === "quick" || !quickSubject.trim()}
+                  className="bg-gradient-to-r from-primary to-accent text-white glow-primary"
+                >
+                  {busy === "quick" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                  Générer texte {includeImage ? "+ image" : ""}
+                </Button>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                  <Switch checked={includeImage} onCheckedChange={setIncludeImage} />
+                  Inclure une image
+                </label>
+                <p className="text-[11px] text-muted-foreground ml-auto">
+                  Le résultat s'affiche à droite dans l'aperçu → publie ou programme.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* SOURCES block */}
           <Card className="border-border/50 bg-card/60 backdrop-blur-xl">
             <CardHeader className="border-b border-border/40">
