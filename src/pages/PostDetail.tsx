@@ -7,6 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Send, Loader2 } from "lucide-react";
+import { useSignedImage } from "@/hooks/useSignedImage";
+
+const PostImage = ({ url }: { url: string }) => {
+  const signed = useSignedImage(url);
+  if (!signed) return null;
+  return (
+    <img
+      src={signed}
+      alt="Post image"
+      className="w-full rounded-lg object-cover aspect-video"
+    />
+  );
+};
 
 const PostDetail = () => {
   const { id } = useParams();
@@ -94,13 +107,7 @@ const PostDetail = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {post.image_url && !post.image_url.startsWith("data:") && (
-              <img
-                src={post.image_url}
-                alt="Post image"
-                className="w-full rounded-lg object-cover aspect-video"
-              />
-            )}
+            {post.image_url && <PostImage url={post.image_url} />}
             <div className="whitespace-pre-wrap text-sm leading-relaxed">
               {post.content}
             </div>

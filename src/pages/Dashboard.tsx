@@ -7,6 +7,19 @@ import {
   PieChart, Pie, Cell, Legend
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { useSignedImage } from "@/hooks/useSignedImage";
+
+const Thumb = ({ url }: { url: string }) => {
+  const signed = useSignedImage(url);
+  if (!signed) {
+    return (
+      <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
+        <Sparkles className="h-4 w-4 text-primary/70" />
+      </div>
+    );
+  }
+  return <img src={signed} alt="" className="h-10 w-10 rounded-lg object-cover" />;
+};
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -261,8 +274,8 @@ const Dashboard = () => {
               <div className="space-y-2">
                 {recent.map((p) => (
                   <Link key={p.id} to={`/post/${p.id}`} className="flex items-center gap-3 p-3 rounded-lg hover:bg-background/40 transition">
-                    {p.image_url && !p.image_url.startsWith("data:") ? (
-                      <img src={p.image_url} alt="" className="h-10 w-10 rounded-lg object-cover" />
+                    {p.image_url ? (
+                      <Thumb url={p.image_url} />
                     ) : (
                       <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
                         <Sparkles className="h-4 w-4 text-primary/70" />
