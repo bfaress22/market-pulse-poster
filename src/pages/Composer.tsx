@@ -244,12 +244,9 @@ const Composer = () => {
     try {
       const ext = file.name.split(".").pop() || "png";
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-      const { error } = await supabase.storage.from("post-assets").upload(path, file, {
-        contentType: file.type, upsert: false,
-      });
-      if (error) throw error;
-      const { data } = supabase.storage.from("post-assets").getPublicUrl(path);
-      setImageUrl(data.publicUrl);
+      const { uploadPostAsset } = await import("@/lib/storage");
+      const signedUrl = await uploadPostAsset(path, file, file.type);
+      setImageUrl(signedUrl);
       toast({ title: "Image téléversée" });
     } catch (e: any) {
       toast({ title: "Erreur upload", description: e.message, variant: "destructive" });

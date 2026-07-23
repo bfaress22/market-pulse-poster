@@ -171,7 +171,10 @@ async function generateImage(prompt: string, model: string, supabase: any, userI
   const fileName = `${userId}/${crypto.randomUUID()}.png`;
   const { error } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: "image/png" });
   if (error) return null;
-  return supabase.storage.from("post-assets").getPublicUrl(fileName).data.publicUrl;
+  const { data: signed } = await supabase.storage
+    .from("post-assets")
+    .createSignedUrl(fileName, 60 * 60 * 24 * 7);
+  return signed?.signedUrl ?? null;
 }
 
 // ===== LinkedIn publish =====

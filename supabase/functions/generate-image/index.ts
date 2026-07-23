@@ -139,8 +139,14 @@ serve(async (req) => {
       console.error("upload err", upErr);
       return json(200, { success: true, imageUrl });
     }
-    const { data: pub } = supabase.storage.from("post-assets").getPublicUrl(fileName);
-    return json(200, { success: true, imageUrl: pub.publicUrl });
+    const { data: signed, error: signErr } = await supabase.storage
+      .from("post-assets")
+      .createSignedUrl(fileName, 60 * 60 * 24 * 7);
+    if (signErr || !signed?.signedUrl) {
+      console.error("sign err", signErr);
+      return json(200, { success: true, imageUrl });
+    }
+    return json(200, { success: true, imageUrl: signed.signedUrl });
   } catch (e) {
     console.error("generate-image error", e);
     return json(500, { success: false, error: e instanceof Error ? e.message : "Failed" });
