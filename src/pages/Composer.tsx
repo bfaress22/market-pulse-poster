@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sparkles, Wand2, Image as ImageIcon, Upload, Send, Save, Loader2,
   CalendarIcon, X, Type, RefreshCw, Linkedin, Lightbulb, Globe, Hash, Plus, BookMarked,
-  Repeat, Clock,
+  Repeat, Clock, Zap,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
