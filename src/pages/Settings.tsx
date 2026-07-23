@@ -62,6 +62,7 @@ const TEXT_PROVIDERS: ByokProvider[] = [
 ];
 
 const LS_KEY = (uid: string) => `linkedin_app_draft_${uid}`;
+const LINKEDIN_OAUTH_STATE_KEY = "linkedin_oauth_state";
 
 const Settings = () => {
   const { user } = useAuth();
@@ -83,10 +84,11 @@ const Settings = () => {
       if (event.data?.type !== "linkedin-oauth-result") return;
       setIsConnecting(false);
       if (event.data.success) {
+        localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
         qc.invalidateQueries({ queryKey: ["user_settings"] });
         toast({ title: "LinkedIn connecté" });
       } else {
-        toast({ title: "Échec de la connexion", description: event.data.error, variant: "destructive" });
+        toast({ title: "Échec de la connexion", description: event.data.error || "Erreur OAuth LinkedIn", variant: "destructive" });
       }
     };
     window.addEventListener("message", handler);
@@ -250,9 +252,13 @@ const Settings = () => {
         }
         throw error;
       }
-      if (!data.success) throw new Error(data.error);
+      if (!data?.success) throw new Error(data?.message || data?.error || "Impossible de générer l'URL LinkedIn.");
+      if (!data.state || typeof data.state !== "string") throw new Error("State OAuth manquant. Réessaie la connexion LinkedIn.");
+
+      localStorage.setItem(LINKEDIN_OAUTH_STATE_KEY, data.state);
       const popup = window.open(data.authUrl, "linkedin-oauth", "popup=yes,width=720,height=820");
       if (!popup) {
+        localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
         setIsConnecting(false);
         throw new Error("Popup bloquée. Autorise les popups et réessaie.");
       }
