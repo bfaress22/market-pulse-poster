@@ -166,6 +166,77 @@ const Composer = () => {
     onSettled: () => setBusy(null),
   });
 
+  // ---- Quick generate: subject → text + image in parallel ----
+  const [quickSubject, setQuickSubject] = useState("");
+  const quickGenerate = useMutation({
+    mutationFn: async () => {
+      const subject = quickSubject.trim();
+      if (!subject) throw new Error("Entre un sujet");
+      setBusy("quick");
+      // Sync subject into the AI-text prompt so downstream flows (improve, automate) stay coherent.
+      setTextPrompt(subject);
+      setTextMode("ai");
+      if (includeImage) setImageMode("ai");
+
+      const textPromise = supabase.functions.invoke("compose-text", {
+        body: {
+          prompt: subject,
+          mode: "create",
+          savedSourceIds: selectedSourceIds,
+          sources: adhocSources.map(({ type, value }) => ({ type, value })),
+        },
+      });
+
+      const imagePromise = includeImage
+        ? (async () => {
+            const prefs = loadPrefs();
+            return supabase.functions.invoke("generate-image", {
+              body: {
+                prompt: imagePrompt?.trim() || subject,
+                aspectRatio: prefs.aspectRatio,
+                style: prefs.style,
+                mood: prefs.mood,
+                colors: prefs.colors,
+                bottomMarginPercent: prefs.bottomMarginPercent,
+                textOverlay: prefs.textOverlay,
+                wordmark: prefs.wordmark,
+              },
+            });
+          })()
+        : Promise.resolve(null);
+
+      const [textRes, imgRes] = await Promise.allSettled([textPromise, imagePromise]);
+
+      let textOk = false;
+      let imgOk = false;
+      if (textRes.status === "fulfilled") {
+        const { data, error } = textRes.value as any;
+        if (!error && data?.success) {
+          setContent(data.content);
+          if (!title) setTitle(data.title);
+          textOk = true;
+        }
+      }
+      if (imgRes.status === "fulfilled" && imgRes.value) {
+        const { data, error } = imgRes.value as any;
+        if (!error && data?.success) {
+          setImageUrl(data.imageUrl);
+          imgOk = true;
+        }
+      }
+      if (!textOk && !imgOk) throw new Error("La génération a échoué");
+      return { textOk, imgOk };
+    },
+    onSuccess: ({ textOk, imgOk }) => {
+      toast({
+        title: "Généré ✨",
+        description: [textOk && "texte", imgOk && "image"].filter(Boolean).join(" + ") || "prêt",
+      });
+    },
+    onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
+    onSettled: () => setBusy(null),
+  });
+
   // ---- Manual upload ----
   const uploadImage = async (file: File) => {
     if (!user) return;
