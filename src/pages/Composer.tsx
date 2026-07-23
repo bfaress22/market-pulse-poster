@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sparkles, Wand2, Image as ImageIcon, Upload, Send, Save, Loader2,
   CalendarIcon, X, Type, RefreshCw, Linkedin, Lightbulb, Globe, Hash, Plus, BookMarked,
-  Repeat, Clock,
+  Repeat, Clock, Zap,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -166,6 +166,77 @@ const Composer = () => {
     onSettled: () => setBusy(null),
   });
 
+  // ---- Quick generate: subject → text + image in parallel ----
+  const [quickSubject, setQuickSubject] = useState("");
+  const quickGenerate = useMutation({
+    mutationFn: async () => {
+      const subject = quickSubject.trim();
+      if (!subject) throw new Error("Entre un sujet");
+      setBusy("quick");
+      // Sync subject into the AI-text prompt so downstream flows (improve, automate) stay coherent.
+      setTextPrompt(subject);
+      setTextMode("ai");
+      if (includeImage) setImageMode("ai");
+
+      const textPromise = supabase.functions.invoke("compose-text", {
+        body: {
+          prompt: subject,
+          mode: "create",
+          savedSourceIds: selectedSourceIds,
+          sources: adhocSources.map(({ type, value }) => ({ type, value })),
+        },
+      });
+
+      const imagePromise = includeImage
+        ? (async () => {
+            const prefs = loadPrefs();
+            return supabase.functions.invoke("generate-image", {
+              body: {
+                prompt: imagePrompt?.trim() || subject,
+                aspectRatio: prefs.aspectRatio,
+                style: prefs.style,
+                mood: prefs.mood,
+                colors: prefs.colors,
+                bottomMarginPercent: prefs.bottomMarginPercent,
+                textOverlay: prefs.textOverlay,
+                wordmark: prefs.wordmark,
+              },
+            });
+          })()
+        : Promise.resolve(null);
+
+      const [textRes, imgRes] = await Promise.allSettled([textPromise, imagePromise]);
+
+      let textOk = false;
+      let imgOk = false;
+      if (textRes.status === "fulfilled") {
+        const { data, error } = textRes.value as any;
+        if (!error && data?.success) {
+          setContent(data.content);
+          if (!title) setTitle(data.title);
+          textOk = true;
+        }
+      }
+      if (imgRes.status === "fulfilled" && imgRes.value) {
+        const { data, error } = imgRes.value as any;
+        if (!error && data?.success) {
+          setImageUrl(data.imageUrl);
+          imgOk = true;
+        }
+      }
+      if (!textOk && !imgOk) throw new Error("La génération a échoué");
+      return { textOk, imgOk };
+    },
+    onSuccess: ({ textOk, imgOk }) => {
+      toast({
+        title: "Généré ✨",
+        description: [textOk && "texte", imgOk && "image"].filter(Boolean).join(" + ") || "prêt",
+      });
+    },
+    onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
+    onSettled: () => setBusy(null),
+  });
+
   // ---- Manual upload ----
   const uploadImage = async (file: File) => {
     if (!user) return;
@@ -282,6 +353,43 @@ const Composer = () => {
       <div className="grid lg:grid-cols-[1fr_400px] gap-6">
         {/* LEFT: editors */}
         <div className="space-y-6">
+          {/* QUICK generate: subject → text + image in parallel */}
+          <Card className="border-primary/40 bg-gradient-to-br from-primary/10 via-card/60 to-accent/10 backdrop-blur-xl">
+            <CardHeader className="border-b border-border/40">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Zap className="h-4 w-4 text-primary" /> Génération rapide
+                <Badge variant="secondary" className="ml-1 text-[10px]">texte + image en parallèle</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5 space-y-3">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Sujet du post</Label>
+              <Textarea
+                value={quickSubject}
+                onChange={(e) => setQuickSubject(e.target.value)}
+                placeholder="Ex : les tendances IA agentique en 2026 pour les startups B2B…"
+                rows={2}
+                className="bg-background/40"
+              />
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  onClick={() => quickGenerate.mutate()}
+                  disabled={busy === "quick" || !quickSubject.trim()}
+                  className="bg-gradient-to-r from-primary to-accent text-white glow-primary"
+                >
+                  {busy === "quick" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                  Générer texte {includeImage ? "+ image" : ""}
+                </Button>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                  <Switch checked={includeImage} onCheckedChange={setIncludeImage} />
+                  Inclure une image
+                </label>
+                <p className="text-[11px] text-muted-foreground ml-auto">
+                  Le résultat s'affiche à droite dans l'aperçu → publie ou programme.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* SOURCES block */}
           <Card className="border-border/50 bg-card/60 backdrop-blur-xl">
             <CardHeader className="border-b border-border/40">
