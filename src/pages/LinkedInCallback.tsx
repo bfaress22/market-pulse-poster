@@ -5,6 +5,28 @@ import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
+const LINKEDIN_OAUTH_STATE_KEY = "linkedin_oauth_state";
+
+const readFunctionError = async (error: unknown) => {
+  if (error && typeof error === "object" && "context" in error) {
+    const context = (error as { context?: Response }).context;
+    if (context) {
+      try {
+        const body = await context.json();
+        if (body?.message) return String(body.message);
+        if (body?.error) return String(body.error);
+      } catch {
+        try {
+          const text = await context.text();
+          if (text) return text;
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  return error instanceof Error ? error.message : "Failed to exchange code";
+};
+
 const LinkedInCallback = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
@@ -23,6 +45,7 @@ const LinkedInCallback = () => {
 
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
+    const state = params.get("state");
     const error = params.get("error");
 
     if (error) {
@@ -39,6 +62,21 @@ const LinkedInCallback = () => {
       notifyParentAndClose({ success: false, error: "No authorization code received." });
       setStatus("error");
       setMessage("No authorization code received.");
+      return;
+    }
+
+    if (!state) {
+      notifyParentAndClose({ success: false, error: "Le paramètre state LinkedIn est manquant. Relance la connexion." });
+      setStatus("error");
+      setMessage("Le paramètre state LinkedIn est manquant. Relance la connexion.");
+      return;
+    }
+
+    const storedState = localStorage.getItem(LINKEDIN_OAUTH_STATE_KEY);
+    if (!storedState || storedState !== state) {
+      notifyParentAndClose({ success: false, error: "La validation de sécurité LinkedIn a échoué. Relance la connexion." });
+      setStatus("error");
+      setMessage("La validation de sécurité LinkedIn a échoué. Relance la connexion.");
       return;
     }
 
@@ -60,12 +98,15 @@ const LinkedInCallback = () => {
           body: {
             action: "exchange_code",
             code,
+            state,
             redirectUri: `${window.location.origin}/linkedin/callback`,
           },
         });
 
-        if (fnError) throw fnError;
-        if (!data.success) throw new Error(data.error);
+        if (fnError) throw new Error(await readFunctionError(fnError));
+        if (!data.success) throw new Error(data.message || data.error);
+
+        localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
 
         if (notifyParentAndClose({ success: true })) {
           return;
