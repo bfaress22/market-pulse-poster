@@ -49,6 +49,7 @@ const LinkedInCallback = () => {
     const error = params.get("error");
 
     if (error) {
+      localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       notifyParentAndClose({
         success: false,
         error: params.get("error_description") || "Authorization was denied.",
@@ -59,6 +60,7 @@ const LinkedInCallback = () => {
     }
 
     if (!code) {
+      localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       notifyParentAndClose({ success: false, error: "No authorization code received." });
       setStatus("error");
       setMessage("No authorization code received.");
@@ -66,6 +68,7 @@ const LinkedInCallback = () => {
     }
 
     if (!state) {
+      localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       notifyParentAndClose({ success: false, error: "Le paramètre state LinkedIn est manquant. Relance la connexion." });
       setStatus("error");
       setMessage("Le paramètre state LinkedIn est manquant. Relance la connexion.");
@@ -74,6 +77,7 @@ const LinkedInCallback = () => {
 
     const storedState = localStorage.getItem(LINKEDIN_OAUTH_STATE_KEY);
     if (!storedState || storedState !== state) {
+      localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       notifyParentAndClose({ success: false, error: "La validation de sécurité LinkedIn a échoué. Relance la connexion." });
       setStatus("error");
       setMessage("La validation de sécurité LinkedIn a échoué. Relance la connexion.");
@@ -118,6 +122,7 @@ const LinkedInCallback = () => {
         // Redirect to settings after 2 seconds
         setTimeout(() => navigate("/settings"), 2000);
       } catch (err) {
+        localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
         notifyParentAndClose({
           success: false,
           error: err instanceof Error ? err.message : "Failed to exchange code",

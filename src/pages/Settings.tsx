@@ -83,8 +83,8 @@ const Settings = () => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type !== "linkedin-oauth-result") return;
       setIsConnecting(false);
+      localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       if (event.data.success) {
-        localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
         qc.invalidateQueries({ queryKey: ["user_settings"] });
         toast({ title: "LinkedIn connecté" });
       } else {
