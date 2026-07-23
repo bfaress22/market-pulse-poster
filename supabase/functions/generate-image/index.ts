@@ -67,7 +67,7 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) return json(500, { success: false, error: "LOVABLE_API_KEY not configured" });
 
-    const fullPrompt = buildPrompt({ prompt, style, mood, colors, aspectRatio, textOverlay, wordmark, margin });
+    const fullPrompt = buildPrompt({ prompt });
 
     const userContent: unknown = inputImageUrl
       ? [
