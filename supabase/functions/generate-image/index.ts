@@ -28,7 +28,88 @@ const POSITION_LABELS: Record<string, string> = {
 
 function buildPrompt(opts: { prompt: string }): string {
   const subject = (opts.prompt || "").trim();
-  return `Create a high-tech, sleek isometric 3D visualization or abstract data model illustrating the concept of ${subject} for a professional LinkedIn post. The visualization must be purely symbolic, using geometric shapes, connected data nodes, modules, glowing data streams, and dynamic, clean-line trend arrows. Use a professional color palette (corporate blues, golds, natural greens). Use premium materials like frosted glass, polished steel, and glowing holographic elements. CRITICAL INSTRUCTION: There must be absolutely NO text, NO labels, NO letters, and NO numbers anywhere on the image. The visualization must convey meaning solely through its forms, symbols, and interconnected structure. The perspective should be a clean isometric view against a sophisticated, subtle technical interface background.`;
+  return `You are an award-winning Editorial Infographic Designer with over 20 years of experience creating visual reports for Bloomberg, Financial Times, Reuters, The Economist, McKinsey, BCG and Deloitte.
+
+Your mission is to transform the following professional subject into a premium editorial infographic that looks like it was designed by an experienced graphic designer.
+
+SUBJECT / ARTICLE:
+${subject}
+
+The infographic must NEVER look AI-generated.
+
+==================================================
+DESIGN OBJECTIVES
+==================================================
+Create a clean, premium, corporate editorial design.
+The final result should resemble:
+• Bloomberg Intelligence
+• Financial Times Graphics
+• Reuters Graphics
+• Visual Capitalist
+• McKinsey Reports
+• Deloitte Insights
+• World Bank publications
+NOT a marketing poster. NOT an AI artwork. NOT a fantasy illustration. NOT a social media collage.
+
+==================================================
+VISUAL STYLE
+==================================================
+Minimalistic, elegant, corporate, editorial, professional, structured, high-end, balanced. Lots of whitespace. Perfect alignment. Strong visual hierarchy. Premium typography. Grid-based layout. Consistent spacing. Professional icons. Subtle shadows. Flat design mixed with realistic illustrations only when necessary.
+
+==================================================
+LAYOUT
+==================================================
+Always organize information into clearly separated sections. Possible structure: large title, subtitle, key takeaway, main illustration, 3–6 information cards, small charts, timeline, statistics, key figures, icons, footer. Everything perfectly aligned. Never overcrowd the page.
+
+==================================================
+TEXT
+==================================================
+The infographic may contain text only if provided above. NEVER invent statistics, percentages, dates, quotes, company names, institutions, economic figures, country names or political claims. If a value is unknown, replace it with a neutral placeholder or omit it entirely. Never fabricate information. Text must be perfectly readable, grammatically correct, professional, concise and consistent. No spelling mistakes, no broken words, no random characters, no gibberish.
+
+==================================================
+POLITICAL SAFETY
+==================================================
+Never generate political opinions. Never represent disputed territories. Never generate controversial maps. Never modify international borders. Never include geopolitical claims. If maps are needed, use abstract neutral maps or avoid maps completely. Avoid all sensitive political symbolism.
+
+==================================================
+NUMBERS
+==================================================
+Never invent numbers. Only display numbers explicitly supplied above. If none are supplied, replace charts with elegant abstract visualizations or generic placeholders.
+
+==================================================
+CHARTS
+==================================================
+Professional. Simple. Minimal. Business style. Thin lines. Neutral colors. No fake data.
+
+==================================================
+COLORS
+==================================================
+Dark navy, white, soft gray, gold accents, light blue accents. Maximum 4 primary colors. High contrast. Premium appearance.
+
+==================================================
+ILLUSTRATIONS
+==================================================
+Photorealistic when appropriate. High quality. Editorial. No surrealism, no fantasy, no cartoon, no exaggerated cinematic effects.
+
+==================================================
+ICONS
+==================================================
+Simple, corporate, monoline, consistent style, premium quality.
+
+==================================================
+QUALITY
+==================================================
+Looks like designed by a senior graphic designer. Suitable for LinkedIn, annual reports, consulting presentations, corporate publications, investor reports.
+
+==================================================
+NEGATIVE PROMPT
+==================================================
+Avoid: AI style, 3D render look, cartoon, anime, fantasy, oversaturated colors, messy layout, poor typography, watermarks, logos, fake statistics, fake charts, hallucinated numbers, political content, low resolution, text distortion, spelling mistakes, random characters, duplicated elements, visual clutter, poor alignment, bad spacing, cheap templates, Canva-looking layouts, social media aesthetics, clickbait.
+
+==================================================
+FINAL GOAL
+==================================================
+Produce an infographic that is visually indistinguishable from one created by a professional editorial designer for a leading international consulting firm or financial publication.`;
 }
 
 
