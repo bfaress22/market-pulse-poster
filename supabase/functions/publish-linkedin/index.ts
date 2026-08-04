@@ -46,9 +46,13 @@ serve(async (req) => {
       });
     }
 
-    const authorUrn = organizationId
-      ? `urn:li:organization:${organizationId.replace(/^urn:li:organization:/, "")}`
-      : personUrn;
+    const normalizedPerson = personUrn.startsWith("urn:li:")
+      ? personUrn
+      : `urn:li:person:${personUrn}`;
+    // Only use an organization author when it's a numeric page ID (a Client ID is NOT a page ID)
+    const orgId = (organizationId ?? "").replace(/^urn:li:organization:/, "").trim();
+    const useOrg = /^\d+$/.test(orgId);
+    let authorUrn = useOrg ? `urn:li:organization:${orgId}` : normalizedPerson;
 
     let imageAsset: string | null = null;
     if (post.image_url && !post.image_url.startsWith("data:")) {
