@@ -46,9 +46,13 @@ serve(async (req) => {
       });
     }
 
-    const authorUrn = organizationId
-      ? `urn:li:organization:${organizationId.replace(/^urn:li:organization:/, "")}`
-      : personUrn;
+    const normalizedPerson = personUrn.startsWith("urn:li:")
+      ? personUrn
+      : `urn:li:person:${personUrn}`;
+    // Only use an organization author when it's a numeric page ID (a Client ID is NOT a page ID)
+    const orgId = (organizationId ?? "").replace(/^urn:li:organization:/, "").trim();
+    const useOrg = /^\d+$/.test(orgId);
+    let authorUrn = useOrg ? `urn:li:organization:${orgId}` : normalizedPerson;
 
     let imageAsset: string | null = null;
     if (post.image_url && !post.image_url.startsWith("data:")) {
@@ -76,8 +80,8 @@ serve(async (req) => {
       } catch (e) { console.error("img upload failed", e); }
     }
 
-    const body = {
-      author: authorUrn,
+    const buildBody = (author: string) => ({
+      author,
       lifecycleState: "PUBLISHED",
       specificContent: {
         "com.linkedin.ugc.ShareContent": {
@@ -87,17 +91,29 @@ serve(async (req) => {
         },
       },
       visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    };
-
-    const liRes = await fetch("https://api.linkedin.com/v2/ugcPosts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0",
-      },
-      body: JSON.stringify(body),
     });
+
+    const postToLinkedIn = (author: string) =>
+      fetch("https://api.linkedin.com/v2/ugcPosts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "X-Restli-Protocol-Version": "2.0.0",
+        },
+        body: JSON.stringify(buildBody(author)),
+      });
+
+    let liRes = await postToLinkedIn(authorUrn);
+
+    // 403 on /author => no page-posting permission (missing w_organization_social / not admin).
+    // Fall back to publishing on the personal profile.
+    if (liRes.status === 403 && authorUrn !== normalizedPerson) {
+      const first = await liRes.text();
+      console.error("LinkedIn org author denied, retrying as person:", first);
+      authorUrn = normalizedPerson;
+      liRes = await postToLinkedIn(authorUrn);
+    }
 
     if (!liRes.ok) {
       const errText = await liRes.text();
