@@ -54,8 +54,9 @@ serve(async (req) => {
     const useOrg = /^\d+$/.test(orgId);
     let authorUrn = useOrg ? `urn:li:organization:${orgId}` : normalizedPerson;
 
-    let imageAsset: string | null = null;
-    if (post.image_url && !post.image_url.startsWith("data:")) {
+    // Register/upload the image for a specific owner — the asset MUST be owned by the post author
+    const uploadImage = async (owner: string): Promise<string | null> => {
+      if (!post.image_url || post.image_url.startsWith("data:")) return null;
       try {
         const registerRes = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
           method: "POST",
@@ -63,22 +64,33 @@ serve(async (req) => {
           body: JSON.stringify({
             registerUploadRequest: {
               recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
-              owner: authorUrn,
+              owner,
               serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
             },
           }),
         });
-        if (registerRes.ok) {
-          const rd = await registerRes.json();
-          const uploadUrl = rd.value?.uploadMechanism?.["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]?.uploadUrl;
-          imageAsset = rd.value?.asset;
-          if (uploadUrl) {
-            const blob = await (await fetch(post.image_url)).blob();
-            await fetch(uploadUrl, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` }, body: blob });
-          }
+        if (!registerRes.ok) {
+          console.error("registerUpload failed", registerRes.status, await registerRes.text());
+          return null;
         }
-      } catch (e) { console.error("img upload failed", e); }
-    }
+        const rd = await registerRes.json();
+        const uploadUrl = rd.value?.uploadMechanism?.["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]?.uploadUrl;
+        const asset = rd.value?.asset ?? null;
+        if (!uploadUrl || !asset) return null;
+        const blob = await (await fetch(post.image_url)).blob();
+        const put = await fetch(uploadUrl, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` }, body: blob });
+        if (!put.ok) {
+          console.error("image PUT failed", put.status, await put.text());
+          return null;
+        }
+        return asset;
+      } catch (e) {
+        console.error("img upload failed", e);
+        return null;
+      }
+    };
+
+    let imageAsset = await uploadImage(authorUrn);
 
     const buildBody = (author: string) => ({
       author,
@@ -106,14 +118,16 @@ serve(async (req) => {
 
     let liRes = await postToLinkedIn(authorUrn);
 
-    // 403 on /author => no page-posting permission (missing w_organization_social / not admin).
-    // Fall back to publishing on the personal profile.
-    if (liRes.status === 403 && authorUrn !== normalizedPerson) {
+    // 403 on /author or 400 content-ownership => no page-posting permission.
+    // Fall back to the personal profile, re-uploading the image under that owner.
+    if ((liRes.status === 403 || liRes.status === 400) && authorUrn !== normalizedPerson) {
       const first = await liRes.text();
-      console.error("LinkedIn org author denied, retrying as person:", first);
+      console.error("LinkedIn org author rejected, retrying as person:", first);
       authorUrn = normalizedPerson;
+      imageAsset = await uploadImage(authorUrn);
       liRes = await postToLinkedIn(authorUrn);
     }
+
 
     if (!liRes.ok) {
       const errText = await liRes.text();
