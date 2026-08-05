@@ -45,6 +45,7 @@ const Composer = () => {
   const [textPrompt, setTextPrompt] = useState("");
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
+  const [language, setLanguage] = useState<string>(DEFAULT_LANGUAGE);
 
   // Image
   const [imageMode, setImageMode] = useState<Mode>("ai");
