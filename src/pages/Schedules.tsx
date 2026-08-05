@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2 } from "lucide-react";
+import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2, Linkedin } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
 
 const DAYS = [
   { v: 1, label: "Lun" }, { v: 2, label: "Mar" }, { v: 3, label: "Mer" },
@@ -25,6 +26,7 @@ type Schedule = {
   minute: number;
   timezone: string;
   image_mode: "none" | "ai";
+  target_ids: string[] | null;
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
