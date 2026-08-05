@@ -2,6 +2,8 @@
 // generates the post text in the requested language (+ optional image), then publishes to LinkedIn.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTargets, publishToTargets } from "../_shared/linkedin.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -82,78 +84,8 @@ async function generateImage(prompt: string, model: string | null, supabase: any
   return signed?.signedUrl ?? null;
 }
 
-async function publishToLinkedIn(supabase: any, userId: string, content: string, imageUrl: string | null) {
-  const { data: settings } = await supabase
-    .from("user_settings")
-    .select("linkedin_access_token, linkedin_token_expires_at, linkedin_person_urn, linkedin_organization_id")
-    .eq("user_id", userId).maybeSingle();
-  const token = settings?.linkedin_access_token;
-  const personUrn = settings?.linkedin_person_urn;
-  const orgId = settings?.linkedin_organization_id;
-  const expires = settings?.linkedin_token_expires_at;
-  if (!token || !personUrn) return { ok: false, error: "LinkedIn not connected" };
-  if (expires && Date.parse(expires) <= Date.now()) return { ok: false, error: "LinkedIn token expired" };
-  const author = orgId && /^\d+$/.test(String(orgId).replace(/^urn:li:organization:/, ""))
-    ? `urn:li:organization:${String(orgId).replace(/^urn:li:organization:/, "")}`
-    : personUrn;
+// Publishing is handled by the shared helper (multi-destination + retries).
 
-  const uploadImage = async (owner: string): Promise<string | null> => {
-    if (!imageUrl || imageUrl.startsWith("data:")) return null;
-    try {
-      const reg = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          registerUploadRequest: {
-            recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
-            owner,
-            serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
-          },
-        }),
-      });
-      if (!reg.ok) return null;
-      const rd = await reg.json();
-      const upUrl = rd.value?.uploadMechanism?.["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]?.uploadUrl;
-      const asset = rd.value?.asset ?? null;
-      if (upUrl) {
-        const blob = await (await fetch(imageUrl)).blob();
-        await fetch(upUrl, { method: "PUT", headers: { Authorization: `Bearer ${token}` }, body: blob });
-      }
-      return asset;
-    } catch (e) { console.warn("img upload fail", e); return null; }
-  };
-
-  const post = async (authorUrn: string) => {
-    const asset = await uploadImage(authorUrn);
-    const body = {
-      author: authorUrn,
-      lifecycleState: "PUBLISHED",
-      specificContent: {
-        "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text: content },
-          shareMediaCategory: asset ? "IMAGE" : "NONE",
-          ...(asset ? { media: [{ status: "READY", media: asset }] } : {}),
-        },
-      },
-      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    };
-    const res = await fetch("https://api.linkedin.com/v2/ugcPosts", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Restli-Protocol-Version": "2.0.0" },
-      body: JSON.stringify(body),
-    });
-    return { res, text: res.ok ? "" : await res.text() };
-  };
-
-  let { res, text } = await post(author);
-  if (!res.ok && author !== personUrn && (res.status === 403 || res.status === 400)) {
-    console.warn("org publish failed, falling back to personal urn", text);
-    ({ res, text } = await post(personUrn));
-  }
-  if (!res.ok) return { ok: false, error: `LinkedIn ${res.status}: ${text}` };
-  const liData = await res.json();
-  return { ok: true, linkedinId: liData.id as string | undefined };
-}
 
 async function processTopic(supabase: any, topic: any) {
   const userId = topic.user_id;
@@ -182,27 +114,39 @@ async function processTopic(supabase: any, topic: any) {
     ? await generateImage(topic.subject, us?.image_model ?? null, supabase, userId)
     : null;
 
-  const pub = await publishToLinkedIn(supabase, userId, generated.content, imageUrl);
+  const { targets, error: targetError } = await resolveTargets(supabase, userId, topic.target_ids);
+  if (targetError || !targets.length) throw new Error(targetError || "Aucune destination LinkedIn");
 
-  const { data: insertedPost } = await supabase.from("posts").insert({
-    user_id: userId,
-    title: generated.title,
-    content: generated.content,
-    image_url: imageUrl,
-    status: pub.ok ? "published" : "failed",
-    published_at: pub.ok ? new Date().toISOString() : null,
-    linkedin_post_id: pub.linkedinId || null,
-    scheduled_at: topic.scheduled_at,
-  }).select("id").single();
+  const results = await publishToTargets(supabase, targets, generated.content, imageUrl);
+
+  let firstPostId: string | null = null;
+  for (const r of results) {
+    const { data: insertedPost } = await supabase.from("posts").insert({
+      user_id: userId,
+      title: generated.title,
+      content: generated.content,
+      image_url: imageUrl,
+      status: r.ok ? "published" : "failed",
+      published_at: r.ok ? new Date().toISOString() : null,
+      linkedin_post_id: r.linkedinId || null,
+      scheduled_at: topic.scheduled_at,
+      target_id: r.targetId,
+    }).select("id").single();
+    if (!firstPostId) firstPostId = insertedPost?.id ?? null;
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  const errors = results.filter((r) => !r.ok).map((r) => r.error).join(" | ");
 
   await supabase.from("topic_queue").update({
-    status: pub.ok ? "published" : "failed",
-    error: pub.ok ? null : pub.error,
-    post_id: insertedPost?.id || null,
+    status: okCount > 0 ? "published" : "failed",
+    error: errors || null,
+    post_id: firstPostId,
     processed_at: new Date().toISOString(),
   }).eq("id", topic.id);
 
-  return { id: topic.id, ok: pub.ok, error: pub.error };
+  return { id: topic.id, ok: okCount > 0, published: okCount, total: results.length, error: errors || undefined };
+
 }
 
 serve(async (req) => {

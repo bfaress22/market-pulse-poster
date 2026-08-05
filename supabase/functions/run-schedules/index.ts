@@ -1,6 +1,8 @@
 // Cron-triggered: runs due schedules — scrapes sources, generates post + optional image, publishes to LinkedIn
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTargets, publishToTargets } from "../_shared/linkedin.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -184,67 +186,8 @@ async function generateImage(prompt: string, model: string, supabase: any, userI
   return signed?.signedUrl ?? null;
 }
 
-// ===== LinkedIn publish =====
-async function publishToLinkedIn(supabase: any, userId: string, content: string, imageUrl: string | null): Promise<{ ok: boolean; linkedinId?: string; error?: string }> {
-  const { data: settings } = await supabase
-    .from("user_settings")
-    .select("linkedin_access_token, linkedin_token_expires_at, linkedin_person_urn, linkedin_organization_id")
-    .eq("user_id", userId).maybeSingle();
-  const token = settings?.linkedin_access_token;
-  const personUrn = settings?.linkedin_person_urn;
-  const orgId = settings?.linkedin_organization_id;
-  const expires = settings?.linkedin_token_expires_at;
-  if (!token || !personUrn) return { ok: false, error: "LinkedIn not connected" };
-  if (expires && Date.parse(expires) <= Date.now()) return { ok: false, error: "LinkedIn token expired" };
-  const author = orgId ? `urn:li:organization:${orgId.replace(/^urn:li:organization:/, "")}` : personUrn;
+// ===== LinkedIn publish (shared, multi-destination) =====
 
-  let imageAsset: string | null = null;
-  if (imageUrl && !imageUrl.startsWith("data:")) {
-    try {
-      const reg = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          registerUploadRequest: {
-            recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
-            owner: author,
-            serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
-          },
-        }),
-      });
-      if (reg.ok) {
-        const rd = await reg.json();
-        const upUrl = rd.value?.uploadMechanism?.["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]?.uploadUrl;
-        imageAsset = rd.value?.asset;
-        if (upUrl) {
-          const blob = await (await fetch(imageUrl)).blob();
-          await fetch(upUrl, { method: "PUT", headers: { Authorization: `Bearer ${token}` }, body: blob });
-        }
-      }
-    } catch (e) { console.warn("img upload fail", e); }
-  }
-
-  const body = {
-    author,
-    lifecycleState: "PUBLISHED",
-    specificContent: {
-      "com.linkedin.ugc.ShareContent": {
-        shareCommentary: { text: content },
-        shareMediaCategory: imageAsset ? "IMAGE" : "NONE",
-        ...(imageAsset ? { media: [{ status: "READY", media: imageAsset }] } : {}),
-      },
-    },
-    visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-  };
-  const liRes = await fetch("https://api.linkedin.com/v2/ugcPosts", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Restli-Protocol-Version": "2.0.0" },
-    body: JSON.stringify(body),
-  });
-  if (!liRes.ok) return { ok: false, error: `LinkedIn ${liRes.status}: ${await liRes.text()}` };
-  const liData = await liRes.json();
-  return { ok: true, linkedinId: liData.id };
-}
 
 // ===== Process one schedule =====
 async function processSchedule(supabase: any, sched: any) {
@@ -299,22 +242,37 @@ async function processSchedule(supabase: any, sched: any) {
     imageUrl = await generateImage(sched.image_prompt || generated.title, us?.image_model, supabase, userId);
   }
 
-  // Publish
-  const pub = await publishToLinkedIn(supabase, userId, generated.content, imageUrl);
+  // Publish to every destination configured on the schedule (one post row per destination)
+  const { targets, error: targetError } = await resolveTargets(supabase, userId, sched.target_ids);
+  if (targetError || !targets.length) throw new Error(targetError || "Aucune destination LinkedIn");
 
-  // Insert post record
-  const postRow = {
-    user_id: userId,
-    title: generated.title,
-    content: generated.content,
-    image_url: imageUrl,
-    status: pub.ok ? "published" : "failed",
-    published_at: pub.ok ? new Date().toISOString() : null,
-    linkedin_post_id: pub.linkedinId || null,
-    schedule_id: sched.id,
-    content_hash: hash,
-  };
-  const { data: insertedPost } = await supabase.from("posts").insert(postRow).select("id").single();
+  const results = await publishToTargets(supabase, targets, generated.content, imageUrl);
+
+  for (const r of results) {
+    const { data: insertedPost } = await supabase.from("posts").insert({
+      user_id: userId,
+      title: generated.title,
+      content: generated.content,
+      image_url: imageUrl,
+      status: r.ok ? "published" : "failed",
+      published_at: r.ok ? new Date().toISOString() : null,
+      linkedin_post_id: r.linkedinId || null,
+      schedule_id: sched.id,
+      content_hash: hash,
+      target_id: r.targetId,
+    }).select("id").single();
+
+    await supabase.from("schedule_runs").insert({
+      schedule_id: sched.id,
+      user_id: userId,
+      post_id: insertedPost?.id || null,
+      target_id: r.targetId,
+      attempt: r.attempts || 1,
+      source: "schedule",
+      status: r.ok ? "success" : "failed",
+      message: r.ok ? `Publié sur ${r.targetName}` : r.error || "Échec",
+    });
+  }
 
   // Update schedule memory + next run
   const newUsedUrls = Array.from(new Set([...(sched.used_urls || []), ...freshUrls])).slice(-200);
@@ -327,14 +285,15 @@ async function processSchedule(supabase: any, sched: any) {
     recent_hashes: newHashes,
   }).eq("id", sched.id);
 
-  // Run history
-  await supabase.from("schedule_runs").insert({
-    schedule_id: sched.id, user_id: userId, post_id: insertedPost?.id || null,
-    status: pub.ok ? "success" : "failed",
-    message: pub.ok ? "Published" : pub.error || "Failed",
-  });
+  const okCount = results.filter((r) => r.ok).length;
+  return {
+    id: sched.id,
+    ok: okCount > 0,
+    published: okCount,
+    total: results.length,
+    error: results.find((r) => !r.ok)?.error,
+  };
 
-  return { id: sched.id, ok: pub.ok, error: pub.error };
 }
 
 serve(async (req) => {

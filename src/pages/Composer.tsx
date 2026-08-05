@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -26,6 +26,9 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { loadPrefs } from "@/lib/imagePrefs";
 import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
+import TargetSelect from "@/components/TargetSelect";
+
 
 type Mode = "ai" | "manual";
 
@@ -47,6 +50,14 @@ const Composer = () => {
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<string>(DEFAULT_LANGUAGE);
+
+  // LinkedIn destinations (defaults to the user's default target once loaded)
+  const { targets, defaultTarget } = useLinkedInTargets();
+  const [targetIds, setTargetIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!targetIds.length && defaultTarget) setTargetIds([defaultTarget.id]);
+  }, [defaultTarget, targetIds.length]);
+
 
   // Image
   const [imageMode, setImageMode] = useState<Mode>("ai");
@@ -266,11 +277,15 @@ const Composer = () => {
       if (!textPrompt.trim()) throw new Error("Le prompt IA est requis pour automatiser");
       if (!autoName.trim()) throw new Error("Donne un nom au schedule");
       if (!autoDays.length) throw new Error("Choisis au moins un jour");
+      if (!targetIds.length) throw new Error("Choisis au moins une destination LinkedIn");
+
       const { error } = await supabase.from("schedules").insert({
         user_id: user.id,
         name: autoName.trim(),
         prompt: textPrompt,
         saved_source_ids: selectedSourceIds,
+        target_ids: targetIds,
+
         adhoc_sources: adhocSources.map(({ type, value }) => ({ type, value })),
         days_of_week: autoDays,
         hour: autoHour,
@@ -303,26 +318,46 @@ const Composer = () => {
       toast({ title: "Choisis une date et une heure", variant: "destructive" });
       return;
     }
+    if (action !== "draft" && !targetIds.length) {
+      toast({ title: "Choisis au moins une destination LinkedIn", variant: "destructive" });
+      return;
+    }
     setBusy(action);
     try {
       const status = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
-      const { data: saved, error } = await supabase.from("posts").insert({
+      // One post row per destination so history and retries stay per-destination.
+      const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
+      const rows = destinations.map((targetId) => ({
         user_id: user.id,
         title: title || content.slice(0, 60),
         content,
         image_url: includeImage ? imageUrl : null,
         status,
         scheduled_at: action === "schedule" ? scheduledISO : null,
-      }).select().single();
+        target_id: targetId,
+      }));
+      const { data: saved, error } = await supabase.from("posts").insert(rows).select();
       if (error) throw error;
 
       if (action === "publish") {
-        const { data: pub, error: pubErr } = await supabase.functions.invoke("publish-linkedin", {
-          body: { postId: saved.id },
+        const results = await Promise.allSettled(
+          (saved ?? []).map(async (p) => {
+            const { data: pub, error: pubErr } = await supabase.functions.invoke("publish-linkedin", {
+              body: { postId: p.id, targetId: p.target_id },
+            });
+            if (pubErr) throw pubErr;
+            if (!pub?.success) throw new Error(pub?.error || pub?.message || "Publication échouée");
+          }),
+        );
+        const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+        if (failed.length === results.length) {
+          throw new Error(failed[0]?.reason?.message || "Publication échouée");
+        }
+        toast({
+          title: `Publié sur ${results.length - failed.length}/${results.length} destination(s) 🎉`,
+          description: failed.length ? failed[0]?.reason?.message : undefined,
+          variant: failed.length ? "destructive" : undefined,
         });
-        if (pubErr) throw pubErr;
-        if (!pub?.success) throw new Error(pub?.error || "Publish failed");
-        toast({ title: "Publié sur LinkedIn 🎉" });
       } else if (action === "schedule") {
         toast({ title: "Programmé", description: `Sera publié le ${format(new Date(scheduledISO!), "PPp")}` });
       } else {
@@ -339,6 +374,7 @@ const Composer = () => {
       setBusy(null);
     }
   };
+
 
   return (
     <div className="p-6 lg:p-10 max-w-7xl mx-auto animate-fade-in-up">
@@ -750,8 +786,14 @@ const Composer = () => {
                 </div>
               )}
 
+              {/* Destinations */}
+              <div className="pt-3 border-t border-border/40">
+                <TargetSelect value={targetIds} onChange={setTargetIds} />
+              </div>
+
               {/* Primary actions */}
               <div className="grid gap-2 pt-3 border-t border-border/40">
+
                 {scheduleEnabled ? (
                   <Button
                     onClick={() => submit("schedule")}
@@ -820,7 +862,9 @@ const Composer = () => {
               <Label className="text-xs uppercase tracking-wider text-muted-foreground">Nom</Label>
               <Input value={autoName} onChange={(e) => setAutoName(e.target.value)} placeholder="Ex: Veille IA hebdo" />
             </div>
+            <TargetSelect value={targetIds} onChange={setTargetIds} label="Destinations de l'automatisation" />
             <div>
+
               <Label className="text-xs uppercase tracking-wider text-muted-foreground mb-2 block">Jours</Label>
               <div className="flex gap-2 flex-wrap">
                 {DAYS.map((d) => {

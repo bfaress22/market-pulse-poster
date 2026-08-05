@@ -44,7 +44,7 @@ serve(async (req) => {
   const requestId = crypto.randomUUID();
 
   try {
-    const { action, code, redirectUri, state } = await req.json();
+    const { action, code, redirectUri, state, withPages } = await req.json();
     console.log("[linkedin-oauth] request received", {
       requestId,
       action,
@@ -88,7 +88,12 @@ serve(async (req) => {
         });
       }
 
-      const scopes = "openid profile w_member_social email";
+      // Page scopes are only requested when the user says their LinkedIn app has them
+      // (they require LinkedIn's Community Management / MDP approval).
+      const scopes = withPages
+        ? "openid profile email w_member_social w_organization_social r_organization_social rw_organization_admin"
+        : "openid profile w_member_social email";
+
 
       const generatedState = `${userId}.${crypto.randomUUID()}`;
       const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(generatedState)}`;
@@ -205,6 +210,8 @@ serve(async (req) => {
         : null;
 
       let personUrn = "";
+      let personName = "Profil LinkedIn";
+      let personAvatar: string | null = null;
       console.log("[linkedin-oauth] userinfo request start", { requestId });
       const userinfoRes = await fetch("https://api.linkedin.com/v2/userinfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -213,6 +220,8 @@ serve(async (req) => {
       if (userinfoRes.ok) {
         const u = await userinfoRes.json();
         if (u.sub) personUrn = `urn:li:person:${u.sub}`;
+        personName = u.name || [u.given_name, u.family_name].filter(Boolean).join(" ") || personName;
+        personAvatar = u.picture ?? null;
       } else {
         const userinfoBody = await readProviderBody(userinfoRes);
         console.error("[linkedin-oauth] userinfo error", { requestId, status: userinfoRes.status, body: userinfoBody.raw });
@@ -226,6 +235,68 @@ serve(async (req) => {
         });
       }
 
+      const grantedScopes = (tokenData.scope as string | undefined) || "";
+
+      // Upsert one destination per reachable LinkedIn identity
+      const targetRows: Array<Record<string, unknown>> = [];
+      if (personUrn) {
+        targetRows.push({
+          user_id: userId, kind: "person", urn: personUrn, name: personName,
+          avatar_url: personAvatar, access_token: accessToken, token_expires_at: expiresAt,
+          scopes: grantedScopes, status: "connected",
+        });
+      }
+
+      // Company pages the member administers (requires org scopes on the LinkedIn app)
+      let pagesError: string | null = null;
+      if (grantedScopes.includes("organization")) {
+        try {
+          const aclRes = await fetch(
+            "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&projection=(elements*(organization~(id,localizedName,logoV2)))",
+            { headers: { Authorization: `Bearer ${accessToken}`, "X-Restli-Protocol-Version": "2.0.0" } },
+          );
+          if (aclRes.ok) {
+            const acl = await aclRes.json();
+            for (const el of acl.elements ?? []) {
+              const org = el["organization~"] ?? {};
+              const rawUrn: string = el.organization ?? (org.id ? `urn:li:organization:${org.id}` : "");
+              if (!rawUrn) continue;
+              targetRows.push({
+                user_id: userId, kind: "organization", urn: rawUrn,
+                name: org.localizedName || `Page ${rawUrn.split(":").pop()}`,
+                access_token: accessToken, token_expires_at: expiresAt,
+                scopes: grantedScopes, status: "connected",
+              });
+            }
+          } else {
+            const aclBody = await readProviderBody(aclRes);
+            pagesError = `LinkedIn a refusé la liste des Pages (${aclRes.status}).`;
+            console.error("[linkedin-oauth] organizationAcls error", { requestId, status: aclRes.status, body: aclBody.raw });
+          }
+        } catch (e) {
+          pagesError = "Impossible de récupérer les Pages LinkedIn administrées.";
+          console.error("[linkedin-oauth] organizationAcls failed", { requestId, e });
+        }
+      } else {
+        pagesError = "Ton app LinkedIn n'a pas les permissions Pages (w_organization_social). Seul ton profil est disponible.";
+      }
+
+      const { error: targetsError } = await supabase
+        .from("linkedin_targets")
+        .upsert(targetRows, { onConflict: "user_id,urn" });
+      if (targetsError) {
+        console.error("[linkedin-oauth] targets upsert failed", { requestId, message: targetsError.message });
+        return json(500, { success: false, error: "targets_upsert_failed", message: targetsError.message, requestId });
+      }
+
+      // Ensure exactly one default destination
+      const { data: existing } = await supabase
+        .from("linkedin_targets").select("id, is_default").eq("user_id", userId);
+      if (existing?.length && !existing.some((t: { is_default: boolean }) => t.is_default)) {
+        await supabase.from("linkedin_targets").update({ is_default: true }).eq("id", existing[0].id);
+      }
+
+      // Legacy fields kept in sync for backwards compatibility
       const { error: updateError } = await supabase.from("user_settings").update({
         linkedin_access_token: accessToken,
         linkedin_token_expires_at: expiresAt,
@@ -233,16 +304,20 @@ serve(async (req) => {
       }).eq("user_id", userId);
       if (updateError) {
         console.error("[linkedin-oauth] settings update failed", { requestId, message: updateError.message });
-        return json(500, {
-          success: false,
-          error: "settings_update_failed",
-          message: updateError.message,
-          requestId,
-        });
       }
 
-      console.log("[linkedin-oauth] exchange_code success", { requestId, personUrn: mask(personUrn), expiresIn: tokenData.expires_in });
-      return json(200, { success: true, personUrn, expiresIn: tokenData.expires_in, requestId });
+      console.log("[linkedin-oauth] exchange_code success", {
+        requestId, personUrn: mask(personUrn), targets: targetRows.length, expiresIn: tokenData.expires_in,
+      });
+      return json(200, {
+        success: true,
+        personUrn,
+        targetsCreated: targetRows.length,
+        pagesWarning: pagesError,
+        expiresIn: tokenData.expires_in,
+        requestId,
+      });
+
     }
 
     console.log("[linkedin-oauth] invalid action", { requestId, action });

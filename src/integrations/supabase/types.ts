@@ -68,6 +68,57 @@ export type Database = {
         }
         Relationships: []
       }
+      linkedin_targets: {
+        Row: {
+          access_token: string | null
+          avatar_url: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          kind: string
+          name: string
+          refresh_token: string | null
+          scopes: string | null
+          status: string
+          token_expires_at: string | null
+          updated_at: string
+          urn: string
+          user_id: string
+        }
+        Insert: {
+          access_token?: string | null
+          avatar_url?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          kind?: string
+          name: string
+          refresh_token?: string | null
+          scopes?: string | null
+          status?: string
+          token_expires_at?: string | null
+          updated_at?: string
+          urn: string
+          user_id: string
+        }
+        Update: {
+          access_token?: string | null
+          avatar_url?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          kind?: string
+          name?: string
+          refresh_token?: string | null
+          scopes?: string | null
+          status?: string
+          token_expires_at?: string | null
+          updated_at?: string
+          urn?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       posts: {
         Row: {
           content: string
@@ -81,6 +132,7 @@ export type Database = {
           schedule_id: string | null
           scheduled_at: string | null
           status: string
+          target_id: string | null
           title: string
           user_id: string | null
         }
@@ -96,6 +148,7 @@ export type Database = {
           schedule_id?: string | null
           scheduled_at?: string | null
           status?: string
+          target_id?: string | null
           title: string
           user_id?: string | null
         }
@@ -111,6 +164,7 @@ export type Database = {
           schedule_id?: string | null
           scheduled_at?: string | null
           status?: string
+          target_id?: string | null
           title?: string
           user_id?: string | null
         }
@@ -120,6 +174,13 @@ export type Database = {
             columns: ["schedule_id"]
             isOneToOne: false
             referencedRelation: "schedules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "linkedin_targets"
             referencedColumns: ["id"]
           },
         ]
@@ -153,30 +214,39 @@ export type Database = {
       }
       schedule_runs: {
         Row: {
+          attempt: number
           created_at: string
           id: string
           message: string | null
           post_id: string | null
           schedule_id: string
+          source: string
           status: string
+          target_id: string | null
           user_id: string
         }
         Insert: {
+          attempt?: number
           created_at?: string
           id?: string
           message?: string | null
           post_id?: string | null
           schedule_id: string
+          source?: string
           status?: string
+          target_id?: string | null
           user_id: string
         }
         Update: {
+          attempt?: number
           created_at?: string
           id?: string
           message?: string | null
           post_id?: string | null
           schedule_id?: string
+          source?: string
           status?: string
+          target_id?: string | null
           user_id?: string
         }
         Relationships: [
@@ -208,6 +278,7 @@ export type Database = {
           prompt: string
           recent_hashes: string[]
           saved_source_ids: string[]
+          target_ids: string[]
           timezone: string
           tone_instructions: string | null
           updated_at: string
@@ -232,6 +303,7 @@ export type Database = {
           prompt?: string
           recent_hashes?: string[]
           saved_source_ids?: string[]
+          target_ids?: string[]
           timezone?: string
           tone_instructions?: string | null
           updated_at?: string
@@ -256,6 +328,7 @@ export type Database = {
           prompt?: string
           recent_hashes?: string[]
           saved_source_ids?: string[]
+          target_ids?: string[]
           timezone?: string
           tone_instructions?: string | null
           updated_at?: string
@@ -276,6 +349,7 @@ export type Database = {
           scheduled_at: string
           status: string
           subject: string
+          target_ids: string[]
           updated_at: string
           user_id: string
         }
@@ -290,6 +364,7 @@ export type Database = {
           scheduled_at: string
           status?: string
           subject: string
+          target_ids?: string[]
           updated_at?: string
           user_id: string
         }
@@ -304,6 +379,7 @@ export type Database = {
           scheduled_at?: string
           status?: string
           subject?: string
+          target_ids?: string[]
           updated_at?: string
           user_id?: string
         }
