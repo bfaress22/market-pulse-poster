@@ -60,7 +60,7 @@ async function gatherSourceContext(sources: SourceInput[]): Promise<string> {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, currentText, imageUrl, mode, sources, savedSourceIds } = await req.json();
+    const { prompt, currentText, imageUrl, mode, sources, savedSourceIds, language } = await req.json();
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const auth = req.headers.get("Authorization");
     if (!auth) return json(401, { success: false, error: "Unauthorized" });
