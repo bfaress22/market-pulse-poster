@@ -172,8 +172,12 @@ serve(async (req) => {
       if (response.status === 402) return json(402, { success: false, error: "Add credits to your workspace." });
       const t = await response.text();
       console.error("AI image error:", response.status, t);
-      return json(500, { success: false, error: "Image generation failed" });
+      if (response.status === 403 && t.includes("credit_limit_reached")) {
+        return json(403, { success: false, error: "Limite de crédits IA atteinte pour cet espace de travail. Le propriétaire doit augmenter la limite (Settings → Plans & credits)." });
+      }
+      return json(500, { success: false, error: `Image generation failed [${response.status}]: ${t.substring(0, 300)}` });
     }
+
 
     const data = await response.json();
     const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;

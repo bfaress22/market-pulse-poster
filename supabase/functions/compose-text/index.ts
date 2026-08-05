@@ -156,8 +156,12 @@ Return JSON via the write_post tool.`;
       if (res.status === 429) return json(429, { success: false, error: "Rate limit exceeded." });
       if (res.status === 402) return json(402, { success: false, error: "Add credits to your workspace." });
       const t = await res.text();
+      if (res.status === 403 && t.includes("credit_limit_reached")) {
+        return json(403, { success: false, error: "Limite de crédits IA atteinte pour cet espace de travail. Le propriétaire doit augmenter la limite (Settings → Plans & credits)." });
+      }
       return json(500, { success: false, error: `AI error [${res.status}]: ${t}` });
     }
+
     const data = await res.json();
     const tc = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!tc) return json(500, { success: false, error: "AI returned no structured data" });
