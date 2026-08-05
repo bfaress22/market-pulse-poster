@@ -33,7 +33,7 @@ const LinkedInCallback = () => {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const notifyParentAndClose = (payload: { success: boolean; error?: string }) => {
+    const notifyParentAndClose = (payload: { success: boolean; error?: string; pagesWarning?: string | null }) => {
       if (window.opener && !window.opener.closed) {
         window.opener.postMessage({ type: "linkedin-oauth-result", ...payload }, window.location.origin);
         window.close();
@@ -112,12 +112,16 @@ const LinkedInCallback = () => {
 
         localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
 
-        if (notifyParentAndClose({ success: true })) {
+        if (notifyParentAndClose({ success: true, pagesWarning: data.pagesWarning ?? null })) {
           return;
         }
 
         setStatus("success");
-        setMessage(`Connected successfully! Person URN: ${data.personUrn}`);
+        setMessage(
+          `${data.targetsCreated ?? 1} destination(s) LinkedIn connectée(s).` +
+            (data.pagesWarning ? ` ${data.pagesWarning}` : ""),
+        );
+
         
         // Redirect to settings after 2 seconds
         setTimeout(() => navigate("/settings"), 2000);

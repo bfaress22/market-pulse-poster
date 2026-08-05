@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2 } from "lucide-react";
+import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2, Linkedin } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
 
 const DAYS = [
   { v: 1, label: "Lun" }, { v: 2, label: "Mar" }, { v: 3, label: "Mer" },
@@ -25,6 +26,7 @@ type Schedule = {
   minute: number;
   timezone: string;
   image_mode: "none" | "ai";
+  target_ids: string[] | null;
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -33,6 +35,8 @@ type Schedule = {
 export default function Schedules() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { targets } = useLinkedInTargets();
+
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules"],
@@ -122,6 +126,14 @@ export default function Schedules() {
                       {s.days_of_week.map((d) => DAYS.find((x) => x.v === d)?.label).join(" ")} • {String(s.hour).padStart(2, "0")}:{String(s.minute).padStart(2, "0")} {s.timezone}
                     </Badge>
                     {s.image_mode === "ai" && <Badge variant="outline">+ image IA</Badge>}
+                    {(s.target_ids?.length ?? 0) > 0 && (
+                      <Badge variant="outline" className="gap-1">
+                        <Linkedin className="h-3 w-3" />
+                        {(s.target_ids ?? []).map((id) => targets.find((t) => t.id === id)?.name).filter(Boolean).join(", ")
+                          || `${s.target_ids?.length} destination(s)`}
+                      </Badge>
+                    )}
+
                     {(s.saved_source_ids?.length || s.adhoc_sources?.length) ? (
                       <Badge variant="outline">{(s.saved_source_ids?.length || 0) + (s.adhoc_sources?.length || 0)} source(s)</Badge>
                     ) : null}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { fr as frLocale } from "date-fns/locale";
@@ -15,10 +15,13 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, Languages, ListPlus, Loader2, Play, Trash2, Image as ImageIcon, AlertCircle } from "lucide-react";
+import { CalendarIcon, Clock, Languages, ListPlus, Loader2, Play, Trash2, Image as ImageIcon, AlertCircle, Linkedin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LANGUAGES, DEFAULT_LANGUAGE, languageLabel } from "@/lib/languages";
 import { useNavigate } from "react-router-dom";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
+import TargetSelect from "@/components/TargetSelect";
+
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
   scheduled_topic: { label: "En attente", className: "bg-primary/15 text-primary border-primary/30" },
@@ -39,6 +42,14 @@ const TopicQueue = () => {
   const [time, setTime] = useState("09:00");
   const [includeImage, setIncludeImage] = useState(true);
   const [runningId, setRunningId] = useState<string | null>(null);
+
+  const { targets, defaultTarget } = useLinkedInTargets();
+  const [targetIds, setTargetIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!targetIds.length && defaultTarget) setTargetIds([defaultTarget.id]);
+  }, [defaultTarget, targetIds.length]);
+  const targetName = (id: string | null) => targets.find((t) => t.id === id)?.name ?? null;
+
 
   const { data: topics, isLoading } = useQuery({
     queryKey: ["topic_queue", user?.id],
@@ -63,6 +74,7 @@ const TopicQueue = () => {
       const when = new Date(date);
       when.setHours(h || 0, m || 0, 0, 0);
       if (when.getTime() < Date.now()) throw new Error("La date doit être dans le futur");
+      if (!targetIds.length) throw new Error("Choisis au moins une destination LinkedIn");
       const { error } = await supabase.from("topic_queue").insert({
         user_id: user.id,
         subject: subject.trim(),
@@ -70,9 +82,11 @@ const TopicQueue = () => {
         scheduled_at: when.toISOString(),
         include_image: includeImage,
         status: "scheduled_topic",
+        target_ids: targetIds,
       });
       if (error) throw error;
     },
+
     onSuccess: () => {
       toast({ title: "Sujet ajouté à la file 🗓️", description: "Il sera généré puis publié à l'heure choisie." });
       setSubject("");
@@ -186,10 +200,12 @@ const TopicQueue = () => {
               <span className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" /> Générer une image</span>
               <Switch checked={includeImage} onCheckedChange={setIncludeImage} />
             </label>
+            <TargetSelect value={targetIds} onChange={setTargetIds} />
 
             <Button
               onClick={() => addTopic.mutate()}
-              disabled={addTopic.isPending || !subject.trim() || !date}
+              disabled={addTopic.isPending || !subject.trim() || !date || !targetIds.length}
+
               className="w-full bg-gradient-to-r from-primary to-accent text-white glow-primary"
               size="lg"
             >
@@ -229,6 +245,13 @@ const TopicQueue = () => {
                         </span>
                         <span className="flex items-center gap-1"><Languages className="h-3 w-3" />{languageLabel(t.language)}</span>
                         {t.include_image && <span className="flex items-center gap-1"><ImageIcon className="h-3 w-3" />image</span>}
+                        {(t.target_ids ?? []).length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Linkedin className="h-3 w-3" />
+                            {(t.target_ids as string[]).map((id) => targetName(id)).filter(Boolean).join(", ") || `${t.target_ids.length} destination(s)`}
+                          </span>
+                        )}
+
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">

@@ -12,11 +12,14 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Save, Loader2, Link as LinkIcon, CheckCircle, XCircle,
-  AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check,
+  AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check, Building2,
 } from "lucide-react";
 import { POST_MODELS, IMAGE_MODELS } from "@/lib/ai-models";
+import { useLinkedInTargets, targetHealth, HEALTH_META } from "@/hooks/useLinkedInTargets";
+
 
 type UserSettings = {
   linkedin_client_id: string | null;
@@ -72,6 +75,35 @@ const Settings = () => {
   const [s, setS] = useState<UserSettings | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [withPages, setWithPages] = useState(false);
+  const { targets } = useLinkedInTargets();
+
+  const setDefaultTarget = useMutation({
+    mutationFn: async (id: string) => {
+      await supabase.from("linkedin_targets").update({ is_default: false }).eq("user_id", user!.id);
+      const { error } = await supabase.from("linkedin_targets").update({ is_default: true }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["linkedin_targets"] });
+      toast({ title: "Destination par défaut mise à jour" });
+    },
+    onError: (e: Error) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
+  });
+
+  const removeTarget = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("linkedin_targets").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["linkedin_targets"] });
+      toast({ title: "Destination supprimée" });
+    },
+    onError: (e: Error) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
+  });
+
+
   const [newSource, setNewSource] = useState<{ type: "url" | "keyword"; value: string; label: string }>({
     type: "url", value: "", label: "",
   });
@@ -86,10 +118,15 @@ const Settings = () => {
       localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
       if (event.data.success) {
         qc.invalidateQueries({ queryKey: ["user_settings"] });
-        toast({ title: "LinkedIn connecté" });
+        qc.invalidateQueries({ queryKey: ["linkedin_targets"] });
+        toast({
+          title: "LinkedIn connecté",
+          description: event.data.pagesWarning || undefined,
+        });
       } else {
         toast({ title: "Échec de la connexion", description: event.data.error || "Erreur OAuth LinkedIn", variant: "destructive" });
       }
+
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
@@ -232,7 +269,7 @@ const Settings = () => {
     try {
       const { data, error } = await supabase.functions.invoke("linkedin-oauth", {
         headers: { Authorization: `Bearer ${session.access_token}` },
-        body: { action: "get_auth_url", redirectUri: redirectUrl },
+        body: { action: "get_auth_url", redirectUri: redirectUrl, withPages },
       });
       if (error) {
         // Edge Function a renvoyé une erreur HTTP (ex: 401 non authentifié)
@@ -291,7 +328,7 @@ const Settings = () => {
 
   const sections = [
     { id: "linkedin-app", label: "App LinkedIn", icon: KeyRound },
-    { id: "linkedin-account", label: "Compte LinkedIn", icon: Linkedin },
+    { id: "linkedin-targets", label: "Destinations LinkedIn", icon: Linkedin },
     { id: "sources", label: "Sources de contenu", icon: BookMarked },
     { id: "ai-models", label: "IA & BYOK", icon: Sparkles },
   ];
@@ -386,35 +423,71 @@ const Settings = () => {
         </CardContent>
       </Card>
 
-      {/* Connect LinkedIn */}
-      <Card id="linkedin-account" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
+      {/* LinkedIn destinations */}
+      <Card id="linkedin-targets" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            Connecter le compte LinkedIn
-            <div className="ml-auto">
-              {isConnected ? (
-                <Badge className="gap-1 bg-green-500/15 text-green-600 border border-green-500/30"><CheckCircle className="h-3 w-3" /> Connecté</Badge>
-              ) : isExpired ? (
-                <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> Expiré</Badge>
-              ) : (
-                <Badge variant="outline" className="gap-1"><XCircle className="h-3 w-3" /> Non connecté</Badge>
-              )}
-            </div>
+            Destinations LinkedIn
+            <Badge variant="outline" className="ml-auto">{targets.length} connectée{targets.length > 1 ? "s" : ""}</Badge>
           </CardTitle>
+          <CardDescription>
+            Connecte plusieurs profils et Pages. Tu choisiras ensuite la destination dans le Composer, la file d'attente et tes automatisations.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          {isConnected && (
-            <p className="text-xs text-muted-foreground mb-3">Person URN : <code>{s.linkedin_person_urn}</code> · expire le {expiresAt?.toLocaleDateString()}</p>
+        <CardContent className="space-y-4">
+          {targets.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune destination pour le moment.</p>
+          ) : (
+            <div className="space-y-2">
+              {targets.map((t) => {
+                const health = targetHealth(t);
+                return (
+                  <div key={t.id} className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/30 p-3">
+                    {t.kind === "organization"
+                      ? <Building2 className="h-4 w-4 text-primary shrink-0" />
+                      : <Linkedin className="h-4 w-4 text-primary shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{t.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.kind === "organization" ? "Page LinkedIn" : "Profil personnel"}
+                        {t.token_expires_at ? ` · expire le ${new Date(t.token_expires_at).toLocaleDateString()}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className={HEALTH_META[health].className}>{HEALTH_META[health].label}</Badge>
+                    {t.is_default ? (
+                      <Badge className="bg-primary/15 text-primary border border-primary/30">Par défaut</Badge>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => setDefaultTarget.mutate(t.id)}>Par défaut</Button>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => removeTarget.mutate(t.id)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
           )}
+
+          <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-background/30 p-3">
+            <Checkbox id="with-pages" checked={withPages} onCheckedChange={(v) => setWithPages(!!v)} className="mt-0.5" />
+            <Label htmlFor="with-pages" className="text-sm font-normal leading-snug">
+              Demander l'accès aux Pages LinkedIn que j'administre
+              <span className="block text-xs text-muted-foreground">
+                Nécessite que ton app LinkedIn ait les permissions Community Management approuvées, sinon la connexion échoue.
+              </span>
+            </Label>
+          </div>
+
           {!hasAppCreds && (
-            <p className="text-xs text-amber-500 mb-3">Renseigne d'abord ton Client ID et Client Secret ci-dessus.</p>
+            <p className="text-xs text-amber-500">Renseigne d'abord ton Client ID et Client Secret ci-dessus.</p>
           )}
           <Button onClick={handleConnectLinkedIn} disabled={isConnecting || !hasAppCreds} className="w-full">
             {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LinkIcon className="h-4 w-4" />}
-            {isConnected ? "Reconnecter LinkedIn" : "Se connecter avec LinkedIn"}
+            {targets.length ? "Connecter une autre destination" : "Se connecter avec LinkedIn"}
           </Button>
         </CardContent>
       </Card>
+
 
       {/* Content Sources */}
       <Card id="sources" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
