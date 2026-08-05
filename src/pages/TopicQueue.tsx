@@ -245,6 +245,13 @@ const TopicQueue = () => {
                         </span>
                         <span className="flex items-center gap-1"><Languages className="h-3 w-3" />{languageLabel(t.language)}</span>
                         {t.include_image && <span className="flex items-center gap-1"><ImageIcon className="h-3 w-3" />image</span>}
+                        {(t.target_ids ?? []).length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Linkedin className="h-3 w-3" />
+                            {(t.target_ids as string[]).map((id) => targetName(id)).filter(Boolean).join(", ") || `${t.target_ids.length} destination(s)`}
+                          </span>
+                        )}
+
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
