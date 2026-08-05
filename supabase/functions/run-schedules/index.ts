@@ -107,10 +107,17 @@ async function gatherSources(sources: Source[], usedUrls: Set<string>): Promise<
 }
 
 // ===== AI text generation =====
+const LANG_NAMES: Record<string, string> = {
+  fr: "French (Français)", en: "English", es: "Spanish (Español)",
+  de: "German (Deutsch)", ar: "Arabic (العربية)",
+};
+
 async function generateText(opts: {
-  prompt: string; tone: string | null; sourceCtx: string; model: string; key: string; url: string;
+  prompt: string; tone: string | null; sourceCtx: string; model: string; key: string; url: string; language?: string | null;
 }): Promise<{ title: string; content: string }> {
+  const langName = LANG_NAMES[String(opts.language || "fr")] || LANG_NAMES.fr;
   const sys = `You write engaging LinkedIn posts.
+LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}. Never use another language, whatever the language of the sources.
 Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
 ${opts.tone ? `Tone:\n${opts.tone}` : ""}
 Return JSON via the write_post tool.`;
