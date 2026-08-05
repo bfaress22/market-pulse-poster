@@ -373,6 +373,17 @@ const Composer = () => {
                 className="bg-background/40"
               />
               <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Languages className="h-4 w-4 text-primary" />
+                  <Select value={language} onValueChange={setLanguage}>
+                    <SelectTrigger className="h-9 w-[150px] bg-background/40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button
                   onClick={() => quickGenerate.mutate()}
                   disabled={busy === "quick" || !quickSubject.trim()}
@@ -385,9 +396,9 @@ const Composer = () => {
                   <Switch checked={includeImage} onCheckedChange={setIncludeImage} />
                   Inclure une image
                 </label>
-                <p className="text-[11px] text-muted-foreground ml-auto">
-                  Le résultat s'affiche à droite dans l'aperçu → publie ou programme.
-                </p>
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => navigate("/queue")}>
+                  <ListChecks className="h-3.5 w-3.5" /> Sujets en attente
+                </Button>
               </div>
             </CardContent>
           </Card>
