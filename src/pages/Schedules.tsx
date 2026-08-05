@@ -122,6 +122,14 @@ export default function Schedules() {
                       {s.days_of_week.map((d) => DAYS.find((x) => x.v === d)?.label).join(" ")} • {String(s.hour).padStart(2, "0")}:{String(s.minute).padStart(2, "0")} {s.timezone}
                     </Badge>
                     {s.image_mode === "ai" && <Badge variant="outline">+ image IA</Badge>}
+                    {(s.target_ids?.length ?? 0) > 0 && (
+                      <Badge variant="outline" className="gap-1">
+                        <Linkedin className="h-3 w-3" />
+                        {s.target_ids.map((id) => targets.find((t) => t.id === id)?.name).filter(Boolean).join(", ")
+                          || `${s.target_ids.length} destination(s)`}
+                      </Badge>
+                    )}
+
                     {(s.saved_source_ids?.length || s.adhoc_sources?.length) ? (
                       <Badge variant="outline">{(s.saved_source_ids?.length || 0) + (s.adhoc_sources?.length || 0)} source(s)</Badge>
                     ) : null}
