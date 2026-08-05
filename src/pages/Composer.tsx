@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { loadPrefs } from "@/lib/imagePrefs";
+import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 
 type Mode = "ai" | "manual";
 
@@ -120,6 +121,7 @@ const Composer = () => {
           currentText: mode === "improve" ? content : undefined,
           imageUrl: imageUrl && !imageUrl.startsWith("data:") ? imageUrl : undefined,
           mode,
+          language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
