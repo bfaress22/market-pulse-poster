@@ -129,8 +129,8 @@ export default function Schedules() {
                     {(s.target_ids?.length ?? 0) > 0 && (
                       <Badge variant="outline" className="gap-1">
                         <Linkedin className="h-3 w-3" />
-                        {s.target_ids.map((id) => targets.find((t) => t.id === id)?.name).filter(Boolean).join(", ")
-                          || `${s.target_ids.length} destination(s)`}
+                        {(s.target_ids ?? []).map((id) => targets.find((t) => t.id === id)?.name).filter(Boolean).join(", ")
+                          || `${s.target_ids?.length} destination(s)`}
                       </Badge>
                     )}
 
