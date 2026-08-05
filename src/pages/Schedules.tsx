@@ -35,6 +35,8 @@ type Schedule = {
 export default function Schedules() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { targets } = useLinkedInTargets();
+
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules"],
