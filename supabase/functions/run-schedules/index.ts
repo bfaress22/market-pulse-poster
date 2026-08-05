@@ -285,7 +285,7 @@ async function processSchedule(supabase: any, sched: any) {
     attempt++;
     const g = await generateText({
       prompt: sched.prompt, tone: sched.tone_instructions || us?.tone_instructions || null,
-      sourceCtx, model, key, url,
+      sourceCtx, model, key, url, language: sched.language,
     });
     hash = await sha256Hex(g.content.replace(/\s+/g, " ").trim().toLowerCase().substring(0, 500));
     if (!recentHashes.has(hash)) { generated = g; break; }
