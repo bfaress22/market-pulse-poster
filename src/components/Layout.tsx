@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
-import { BarChart3, Settings, Sparkles, ImageIcon, LogOut, Wand2, CalendarClock } from "lucide-react";
+import { BarChart3, Settings, Sparkles, ImageIcon, LogOut, Wand2, CalendarClock, ListChecks } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { to: "/composer", label: "Composer", icon: Wand2 },
+  { to: "/queue", label: "Sujets en attente", icon: ListChecks },
   { to: "/schedules", label: "Schedules", icon: CalendarClock },
   { to: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { to: "/image-studio", label: "Image Studio", icon: ImageIcon },

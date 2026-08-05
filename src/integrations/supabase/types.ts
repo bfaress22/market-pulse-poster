@@ -200,6 +200,7 @@ export type Database = {
           id: string
           image_mode: string
           image_prompt: string | null
+          language: string
           last_run_at: string | null
           minute: number
           name: string
@@ -223,6 +224,7 @@ export type Database = {
           id?: string
           image_mode?: string
           image_prompt?: string | null
+          language?: string
           last_run_at?: string | null
           minute?: number
           name: string
@@ -246,6 +248,7 @@ export type Database = {
           id?: string
           image_mode?: string
           image_prompt?: string | null
+          language?: string
           last_run_at?: string | null
           minute?: number
           name?: string
@@ -260,6 +263,59 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      topic_queue: {
+        Row: {
+          created_at: string
+          error: string | null
+          id: string
+          include_image: boolean
+          language: string
+          post_id: string | null
+          processed_at: string | null
+          scheduled_at: string
+          status: string
+          subject: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          include_image?: boolean
+          language?: string
+          post_id?: string | null
+          processed_at?: string | null
+          scheduled_at: string
+          status?: string
+          subject: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          include_image?: boolean
+          language?: string
+          post_id?: string | null
+          processed_at?: string | null
+          scheduled_at?: string
+          status?: string
+          subject?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "topic_queue_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_settings: {
         Row: {

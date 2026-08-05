@@ -18,13 +18,14 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sparkles, Wand2, Image as ImageIcon, Upload, Send, Save, Loader2,
   CalendarIcon, X, Type, RefreshCw, Linkedin, Lightbulb, Globe, Hash, Plus, BookMarked,
-  Repeat, Clock, Zap,
+  Repeat, Clock, Zap, Languages, ListChecks,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { loadPrefs } from "@/lib/imagePrefs";
+import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 
 type Mode = "ai" | "manual";
 
@@ -45,6 +46,7 @@ const Composer = () => {
   const [textPrompt, setTextPrompt] = useState("");
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
+  const [language, setLanguage] = useState<string>(DEFAULT_LANGUAGE);
 
   // Image
   const [imageMode, setImageMode] = useState<Mode>("ai");
@@ -119,6 +121,7 @@ const Composer = () => {
           currentText: mode === "improve" ? content : undefined,
           imageUrl: imageUrl && !imageUrl.startsWith("data:") ? imageUrl : undefined,
           mode,
+          language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
@@ -182,6 +185,7 @@ const Composer = () => {
         body: {
           prompt: subject,
           mode: "create",
+          language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
@@ -272,6 +276,7 @@ const Composer = () => {
         hour: autoHour,
         minute: autoMinute,
         timezone: autoTz,
+        language,
         image_mode: includeImage && imageMode === "ai" ? "ai" : "none",
         image_prompt: includeImage && imageMode === "ai" ? (imagePrompt || null) : null,
         enabled: true,
@@ -368,6 +373,17 @@ const Composer = () => {
                 className="bg-background/40"
               />
               <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Languages className="h-4 w-4 text-primary" />
+                  <Select value={language} onValueChange={setLanguage}>
+                    <SelectTrigger className="h-9 w-[150px] bg-background/40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button
                   onClick={() => quickGenerate.mutate()}
                   disabled={busy === "quick" || !quickSubject.trim()}
@@ -380,9 +396,9 @@ const Composer = () => {
                   <Switch checked={includeImage} onCheckedChange={setIncludeImage} />
                   Inclure une image
                 </label>
-                <p className="text-[11px] text-muted-foreground ml-auto">
-                  Le résultat s'affiche à droite dans l'aperçu → publie ou programme.
-                </p>
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => navigate("/queue")}>
+                  <ListChecks className="h-3.5 w-3.5" /> Sujets en attente
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -527,6 +543,17 @@ const Composer = () => {
                     rows={3}
                     className="bg-background/40"
                   />
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                      <Languages className="h-3 w-3" /> Langue
+                    </Label>
+                    <Select value={language} onValueChange={setLanguage}>
+                      <SelectTrigger className="h-9 w-[150px] bg-background/40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       onClick={() => generateText.mutate("create")}

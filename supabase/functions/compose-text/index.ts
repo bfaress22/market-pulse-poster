@@ -60,7 +60,7 @@ async function gatherSourceContext(sources: SourceInput[]): Promise<string> {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, currentText, imageUrl, mode, sources, savedSourceIds } = await req.json();
+    const { prompt, currentText, imageUrl, mode, sources, savedSourceIds, language } = await req.json();
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const auth = req.headers.get("Authorization");
     if (!auth) return json(401, { success: false, error: "Unauthorized" });
@@ -99,7 +99,14 @@ serve(async (req) => {
     }
     if (!key) return json(500, { success: false, error: "No API key" });
 
+    const LANG_NAMES: Record<string, string> = {
+      fr: "French (Français)", en: "English", es: "Spanish (Español)",
+      de: "German (Deutsch)", ar: "Arabic (العربية)",
+    };
+    const langName = LANG_NAMES[String(language || "fr")] || LANG_NAMES.fr;
+
     const sys = `You write engaging LinkedIn posts in the user's voice.
+LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}. Never use another language, whatever the language of the sources or instructions.
 Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
 ${s?.tone_instructions ? `User tone:\n${s.tone_instructions}` : ""}
 Return JSON via the write_post tool.`;
