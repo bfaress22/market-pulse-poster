@@ -21,6 +21,7 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const autoPublish = body.autoPublish ?? false;
+    const language = body.language ?? "fr";
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     // Forward the user's JWT so downstream functions identify the user
@@ -35,7 +36,7 @@ serve(async (req) => {
 
     // 2. generate post
     const postRes = await fetch(`${supabaseUrl}/functions/v1/generate-post`, {
-      method: "POST", headers: fwdHeaders, body: JSON.stringify({ newsMarkdown: scrape.markdown }),
+      method: "POST", headers: fwdHeaders, body: JSON.stringify({ newsMarkdown: scrape.markdown, language }),
     });
     const post = await postRes.json();
     if (!post.success) throw new Error(`Post gen failed: ${post.error}`);

@@ -48,7 +48,7 @@ async function callAi(model: string, settings: Settings, messages: unknown[], to
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { newsMarkdown } = await req.json();
+    const { newsMarkdown, language } = await req.json();
     if (!newsMarkdown) return json(400, { success: false, error: "newsMarkdown required" });
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -66,7 +66,15 @@ serve(async (req) => {
       openai_api_key: null, gemini_api_key: null, tone_instructions: null,
     };
 
+    const LANG_NAMES: Record<string, string> = {
+      fr: "French (français)", en: "English", es: "Spanish (español)", de: "German (Deutsch)",
+      it: "Italian (italiano)", pt: "Portuguese (português)", nl: "Dutch", ar: "Arabic (العربية)",
+    };
+    const langCode = (typeof language === "string" && language) || "fr";
+    const langName = LANG_NAMES[langCode] ?? langCode;
+
     const systemPrompt = `You are a professional content creator producing engaging LinkedIn posts.
+CRITICAL LANGUAGE RULE: write EVERY field (title, content, newsSummary) strictly in ${langName}. Never mix languages, never translate to English unless ${langName} is English. Hashtags must also be in ${langName}.
 Rules:
 - Tone: professional yet engaging
 - 150-300 words
@@ -82,7 +90,7 @@ Return JSON via the create_linkedin_post tool.`;
       settings,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Latest news/inspiration:\n\n${String(newsMarkdown).substring(0, 8000)}` },
+        { role: "user", content: `Write the post in ${langName}.\n\nLatest news/inspiration:\n\n${String(newsMarkdown).substring(0, 8000)}` },
       ],
       [{
         type: "function",
