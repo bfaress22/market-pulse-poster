@@ -35,6 +35,7 @@ const App = () => (
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/composer" element={<Composer />} />
               <Route path="/schedules" element={<Schedules />} />
+              <Route path="/queue" element={<TopicQueue />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/post/:id" element={<PostDetail />} />
               <Route path="/image-studio" element={<ImageStudio />} />
