@@ -185,6 +185,7 @@ const Composer = () => {
         body: {
           prompt: subject,
           mode: "create",
+          language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
@@ -275,6 +276,7 @@ const Composer = () => {
         hour: autoHour,
         minute: autoMinute,
         timezone: autoTz,
+        language,
         image_mode: includeImage && imageMode === "ai" ? "ai" : "none",
         image_prompt: includeImage && imageMode === "ai" ? (imagePrompt || null) : null,
         enabled: true,
