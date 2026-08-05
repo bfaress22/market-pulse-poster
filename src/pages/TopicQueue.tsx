@@ -15,7 +15,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, Languages, ListPlus, Loader2, Play, Trash2, Image as ImageIcon, AlertCircle } from "lucide-react";
+import { CalendarIcon, Clock, Languages, ListPlus, Loader2, Play, Trash2, Image as ImageIcon, AlertCircle, Linkedin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LANGUAGES, DEFAULT_LANGUAGE, languageLabel } from "@/lib/languages";
 import { useNavigate } from "react-router-dom";
