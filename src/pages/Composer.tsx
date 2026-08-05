@@ -543,6 +543,17 @@ const Composer = () => {
                     rows={3}
                     className="bg-background/40"
                   />
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                      <Languages className="h-3 w-3" /> Langue
+                    </Label>
+                    <Select value={language} onValueChange={setLanguage}>
+                      <SelectTrigger className="h-9 w-[150px] bg-background/40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       onClick={() => generateText.mutate("create")}
