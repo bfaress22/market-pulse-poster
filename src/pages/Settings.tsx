@@ -293,7 +293,7 @@ const Settings = () => {
     try {
       const { data, error } = await supabase.functions.invoke("linkedin-oauth", {
         headers: { Authorization: `Bearer ${session.access_token}` },
-        body: { action: "get_auth_url", redirectUri: redirectUrl, withPages },
+        body: { action: "get_auth_url", redirectUri: redirectUrl, withPages, requestPageAccess: withPages },
       });
       if (error) {
         // Edge Function a renvoyé une erreur HTTP (ex: 401 non authentifié)
