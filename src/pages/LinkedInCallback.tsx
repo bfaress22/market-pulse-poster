@@ -33,7 +33,7 @@ const LinkedInCallback = () => {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const notifyParentAndClose = (payload: { success: boolean; error?: string; pagesWarning?: string | null }) => {
+    const notifyParentAndClose = (payload: { success: boolean; error?: string; errorCode?: string; pagesWarning?: string | null }) => {
       if (window.opener && !window.opener.closed) {
         window.opener.postMessage({ type: "linkedin-oauth-result", ...payload }, window.location.origin);
         window.close();
@@ -50,14 +50,20 @@ const LinkedInCallback = () => {
 
     if (error) {
       localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
-      notifyParentAndClose({
-        success: false,
-        error: params.get("error_description") || "Authorization was denied.",
-      });
+      const scopeIssue = /scope|access_denied|unauthorized/i.test(error);
+      const errorCode = scopeIssue ? "missing_company_scopes" : "oauth_failed";
+      const description = scopeIssue
+        ? "Ton app LinkedIn Developer n'est pas approuvée pour gérer les Pages (Community Management API). Décoche l'option Pages ou demande l'accès sur le portail LinkedIn."
+        : params.get("error_description") || "L'autorisation LinkedIn a été refusée.";
+
+      if (notifyParentAndClose({ success: false, error: description, errorCode })) return;
+
       setStatus("error");
-      setMessage(params.get("error_description") || "Authorization was denied.");
+      setMessage(description);
+      navigate(`/settings?oauth_error=${errorCode}`, { replace: true });
       return;
     }
+
 
     if (!code) {
       localStorage.removeItem(LINKEDIN_OAUTH_STATE_KEY);
