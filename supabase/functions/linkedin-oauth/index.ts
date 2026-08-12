@@ -44,7 +44,9 @@ serve(async (req) => {
   const requestId = crypto.randomUUID();
 
   try {
-    const { action, code, redirectUri, state, withPages } = await req.json();
+    const payload = await req.json();
+    const { action, code, redirectUri, state } = payload;
+    const withPages = payload.withPages === true || payload.requestPageAccess === true;
     console.log("[linkedin-oauth] request received", {
       requestId,
       action,
