@@ -109,6 +109,22 @@ const Settings = () => {
   });
   const redirectUrl = `${window.location.origin}/linkedin/callback`;
 
+  const MISSING_SCOPES_MSG =
+    "Échec de connexion : ton application LinkedIn Developer n'a pas encore été approuvée pour gérer les Pages (Community Management API). Décoche l'option ou demande l'accès sur le portail LinkedIn.";
+
+  // Erreur OAuth renvoyée via l'URL (retour LinkedIn sans popup)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get("oauth_error");
+    if (!oauthError) return;
+    toast({
+      title: "Connexion LinkedIn échouée",
+      description: oauthError === "missing_company_scopes" ? MISSING_SCOPES_MSG : "L'autorisation LinkedIn a été refusée. Réessaie.",
+      variant: "destructive",
+    });
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [toast]);
+
   // Listen for OAuth popup result
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -124,13 +140,21 @@ const Settings = () => {
           description: event.data.pagesWarning || undefined,
         });
       } else {
-        toast({ title: "Échec de la connexion", description: event.data.error || "Erreur OAuth LinkedIn", variant: "destructive" });
+        toast({
+          title: "Échec de la connexion",
+          description:
+            event.data.errorCode === "missing_company_scopes"
+              ? MISSING_SCOPES_MSG
+              : event.data.error || "Erreur OAuth LinkedIn",
+          variant: "destructive",
+        });
       }
 
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, [qc, toast]);
+
 
   const { isLoading } = useQuery({
     queryKey: ["user_settings", user?.id],
@@ -269,7 +293,7 @@ const Settings = () => {
     try {
       const { data, error } = await supabase.functions.invoke("linkedin-oauth", {
         headers: { Authorization: `Bearer ${session.access_token}` },
-        body: { action: "get_auth_url", redirectUri: redirectUrl, withPages },
+        body: { action: "get_auth_url", redirectUri: redirectUrl, withPages, requestPageAccess: withPages },
       });
       if (error) {
         // Edge Function a renvoyé une erreur HTTP (ex: 401 non authentifié)
