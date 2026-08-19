@@ -2,6 +2,8 @@ import { useState, useRef, useMemo, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
+import { fnErrorMessage } from "@/lib/fnError";
+
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -137,8 +139,9 @@ const Composer = () => {
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await fnErrorMessage(error, data));
       if (!data?.success) throw new Error(data?.error || "Failed");
+
       return data;
     },
     onSuccess: (d) => {
@@ -168,8 +171,9 @@ const Composer = () => {
           wordmark: prefs.wordmark,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await fnErrorMessage(error, data));
       if (!data?.success) throw new Error(data?.error || "Failed");
+
       return data.imageUrl as string;
     },
     onSuccess: (url) => {
@@ -224,12 +228,15 @@ const Composer = () => {
 
       let textOk = false;
       let imgOk = false;
+      let firstError: string | null = null;
       if (textRes.status === "fulfilled") {
         const { data, error } = textRes.value as any;
         if (!error && data?.success) {
           setContent(data.content);
           if (!title) setTitle(data.title);
           textOk = true;
+        } else if (!firstError) {
+          firstError = await fnErrorMessage(error, data);
         }
       }
       if (imgRes.status === "fulfilled" && imgRes.value) {
@@ -237,9 +244,12 @@ const Composer = () => {
         if (!error && data?.success) {
           setImageUrl(data.imageUrl);
           imgOk = true;
+        } else if (!firstError) {
+          firstError = await fnErrorMessage(error, data);
         }
       }
-      if (!textOk && !imgOk) throw new Error("La génération a échoué");
+      if (!textOk && !imgOk) throw new Error(firstError || "La génération a échoué");
+
       return { textOk, imgOk };
     },
     onSuccess: ({ textOk, imgOk }) => {
