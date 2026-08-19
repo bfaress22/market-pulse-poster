@@ -228,12 +228,15 @@ const Composer = () => {
 
       let textOk = false;
       let imgOk = false;
+      let firstError: string | null = null;
       if (textRes.status === "fulfilled") {
         const { data, error } = textRes.value as any;
         if (!error && data?.success) {
           setContent(data.content);
           if (!title) setTitle(data.title);
           textOk = true;
+        } else if (!firstError) {
+          firstError = await fnErrorMessage(error, data);
         }
       }
       if (imgRes.status === "fulfilled" && imgRes.value) {
@@ -241,9 +244,12 @@ const Composer = () => {
         if (!error && data?.success) {
           setImageUrl(data.imageUrl);
           imgOk = true;
+        } else if (!firstError) {
+          firstError = await fnErrorMessage(error, data);
         }
       }
-      if (!textOk && !imgOk) throw new Error("La génération a échoué");
+      if (!textOk && !imgOk) throw new Error(firstError || "La génération a échoué");
+
       return { textOk, imgOk };
     },
     onSuccess: ({ textOk, imgOk }) => {
