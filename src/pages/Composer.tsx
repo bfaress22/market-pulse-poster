@@ -171,8 +171,9 @@ const Composer = () => {
           wordmark: prefs.wordmark,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await fnErrorMessage(error, data));
       if (!data?.success) throw new Error(data?.error || "Failed");
+
       return data.imageUrl as string;
     },
     onSuccess: (url) => {
