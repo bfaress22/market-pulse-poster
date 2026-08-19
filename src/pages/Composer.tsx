@@ -137,8 +137,9 @@ const Composer = () => {
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await fnErrorMessage(error, data));
       if (!data?.success) throw new Error(data?.error || "Failed");
+
       return data;
     },
     onSuccess: (d) => {
