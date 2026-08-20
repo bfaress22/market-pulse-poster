@@ -40,7 +40,7 @@ export const useLinkedInTargets = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("linkedin_targets")
-        .select("*")
+        .select("id, user_id, kind, urn, name, avatar_url, token_expires_at, scopes, is_default, status, created_at")
         .eq("user_id", user!.id)
         .order("is_default", { ascending: false })
         .order("created_at", { ascending: true });
