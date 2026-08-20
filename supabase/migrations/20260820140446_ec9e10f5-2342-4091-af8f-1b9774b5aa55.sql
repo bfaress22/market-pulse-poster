@@ -1,0 +1,2 @@
+REVOKE SELECT ON public.linkedin_targets FROM authenticated, anon;
+GRANT SELECT (id, user_id, kind, urn, name, avatar_url, token_expires_at, scopes, is_default, status, created_at, updated_at) ON public.linkedin_targets TO authenticated;
