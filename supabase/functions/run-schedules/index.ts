@@ -1,56 +1,22 @@
 // Cron-triggered: runs due schedules — scrapes sources, generates post + optional image, publishes to LinkedIn
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveTargets, publishToTargets } from "../_shared/linkedin.ts";
+import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
+import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
+import { claimDueSchedules, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
+import { computeNextRun, makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
+import { jobLog } from "../_shared/logger.ts";
 
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 const json = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 type Source = { type: "url" | "keyword" | "idea"; value: string };
 
-// ===== Time helpers =====
-// Compute next run time given days_of_week (1=Mon..7=Sun), hour, minute, IANA tz
-function computeNextRun(daysOfWeek: number[], hour: number, minute: number, tz: string, from: Date = new Date()): Date {
-  if (!daysOfWeek?.length) return new Date(from.getTime() + 24 * 3600_000);
-  const days = new Set(daysOfWeek);
-  // walk minute by minute is overkill; iterate up to 14 days, check candidate per day
-  for (let i = 0; i < 14; i++) {
-    const candidate = new Date(from.getTime() + i * 24 * 3600_000);
-    // Format candidate in tz to get its weekday + figure out the wall-time slot
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
-    }).formatToParts(candidate).reduce<Record<string, string>>((a, p) => { a[p.type] = p.value; return a; }, {});
-    const wdMap: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
-    const wd = wdMap[parts.weekday];
-    if (!days.has(wd)) continue;
-    // Build the target instant: use Date constructor with locale-formatted string then adjust via tz offset
-    // Simple approach: build an ISO-like string in tz and convert.
-    const yyyy = parts.year, mm = parts.month, dd = parts.day;
-    const hh = String(hour).padStart(2, "0");
-    const mi = String(minute).padStart(2, "0");
-    // Get tz offset for that local datetime
-    const local = `${yyyy}-${mm}-${dd}T${hh}:${mi}:00`;
-    const asUTC = new Date(local + "Z").getTime();
-    // Determine offset between tz and UTC at that moment
-    const tzString = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).format(new Date(asUTC));
-    // tzString like "MM/DD/YYYY, HH:mm"
-    const m = tzString.match(/(\d{2})\/(\d{2})\/(\d{4}),?\s+(\d{2}):(\d{2})/);
-    let offsetMin = 0;
-    if (m) {
-      const tzAsUTC = Date.UTC(+m[3], +m[1] - 1, +m[2], +m[4], +m[5]);
-      offsetMin = (asUTC - tzAsUTC) / 60000;
-    }
-    const target = new Date(asUTC + offsetMin * 60000);
-    if (target.getTime() > from.getTime()) return target;
-  }
-  return new Date(from.getTime() + 24 * 3600_000);
-}
+// Time helpers live in _shared/schedule-time.ts
 
 async function sha256Hex(text: string): Promise<string> {
   const buf = new TextEncoder().encode(text);
@@ -179,11 +145,14 @@ async function generateImage(prompt: string, model: string, supabase: any, userI
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   const fileName = `${userId}/${crypto.randomUUID()}.png`;
   const { error } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: "image/png" });
-  if (error) return null;
+  if (error) {
+    console.warn("img storage fail", error.message);
+    return null;
+  }
   const { data: signed } = await supabase.storage
     .from("post-assets")
     .createSignedUrl(fileName, 60 * 60 * 24 * 7);
-  return signed?.signedUrl ?? null;
+  return signed?.signedUrl && isPersistableImageUrl(signed.signedUrl) ? signed.signedUrl : null;
 }
 
 // ===== LinkedIn publish (shared, multi-destination) =====
@@ -236,42 +205,98 @@ async function processSchedule(supabase: any, sched: any) {
   }
   if (!generated) throw new Error("Generated content too similar to recent posts");
 
-  // Image
+  // Image — never silently drop a requested image
   let imageUrl: string | null = null;
   if (sched.image_mode === "ai") {
+    jobLog("CONTENT_GENERATED", { schedule: sched.id });
     imageUrl = await generateImage(sched.image_prompt || generated.title, us?.image_model, supabase, userId);
+    if (!isPersistableImageUrl(imageUrl)) {
+      throw new Error("IMAGE_NOT_PERSISTED: génération ou stockage image en échec. Publication annulée.");
+    }
+    jobLog("IMAGE_READY", { schedule: sched.id });
+  } else {
+    jobLog("CONTENT_GENERATED", { schedule: sched.id });
   }
 
-  // Publish to every destination configured on the schedule (one post row per destination)
   const { targets, error: targetError } = await resolveTargets(supabase, userId, sched.target_ids);
   if (targetError || !targets.length) throw new Error(targetError || "Aucune destination LinkedIn");
 
-  const results = await publishToTargets(supabase, targets, generated.content, imageUrl);
-
-  for (const r of results) {
+  const executionId = new Date().toISOString().slice(0, 16);
+  const results = [];
+  for (const target of targets) {
     const { data: insertedPost } = await supabase.from("posts").insert({
       user_id: userId,
       title: generated.title,
       content: generated.content,
       image_url: imageUrl,
-      status: r.ok ? "published" : "failed",
-      published_at: r.ok ? new Date().toISOString() : null,
-      linkedin_post_id: r.linkedinId || null,
+      status: "processing",
       schedule_id: sched.id,
       content_hash: hash,
-      target_id: r.targetId,
+      target_id: target.id,
     }).select("id").single();
+
+    const postId = insertedPost?.id ?? null;
+    const idempotencyKey = makeIdempotencyKey({
+      postId,
+      targetId: target.id,
+      scheduleId: sched.id,
+      executionId,
+    });
+
+    const claim = await upsertAndClaimJob(supabase, {
+      userId,
+      postId,
+      targetId: target.id,
+      scheduleId: sched.id,
+      idempotencyKey,
+      scheduledFor: new Date().toISOString(),
+    });
+
+    let r;
+    if (claim.action === "already_success") {
+      r = { ok: true, confirmed: true, targetId: target.id, targetName: target.name, linkedinId: claim.job.linkedin_post_urn, attempts: claim.job.attempt_count, retryable: false };
+    } else if (claim.action === "in_flight") {
+      r = { ok: false, confirmed: false, targetId: target.id, targetName: target.name, error: "Publication déjà en cours", attempts: 0, retryable: true, code: "LINKEDIN_TRANSIENT" as const };
+    } else if (claim.action === "terminal_failed") {
+      r = { ok: false, confirmed: false, targetId: target.id, targetName: target.name, error: claim.job.error_message || "Échec définitif", attempts: claim.job.attempt_count, retryable: false, code: claim.job.error_code };
+    } else {
+      jobLog("JOB_STARTED", { job: claim.job.id, target: target.name, schedule: sched.id });
+      r = await publishLinkedInPost({
+        supabase, target, content: generated.content, image: imageUrl, idempotencyKey, requireImage: sched.image_mode === "ai",
+      });
+      await finalizeJob(supabase, {
+        jobId: claim.job.id,
+        ok: r.ok && r.confirmed,
+        retryable: r.retryable,
+        urn: r.linkedinId,
+        errorCode: r.code,
+        errorMessage: r.error,
+        providerStatus: r.providerStatus,
+      });
+    }
+
+    const published = !!(r.ok && r.confirmed && r.linkedinId);
+    if (postId) {
+      await supabase.from("posts").update({
+        status: published ? "published" : r.retryable ? "retrying" : "failed",
+        published_at: published ? new Date().toISOString() : null,
+        linkedin_post_id: r.linkedinId || null,
+        error_code: published ? null : r.code,
+        error_message: published ? null : r.error,
+      }).eq("id", postId);
+    }
 
     await supabase.from("schedule_runs").insert({
       schedule_id: sched.id,
       user_id: userId,
-      post_id: insertedPost?.id || null,
-      target_id: r.targetId,
+      post_id: postId,
+      target_id: target.id,
       attempt: r.attempts || 1,
       source: "schedule",
-      status: r.ok ? "success" : "failed",
-      message: r.ok ? `Publié sur ${r.targetName}` : r.error || "Échec",
+      status: published ? "success" : "failed",
+      message: published ? `Publié sur ${target.name} (${r.linkedinId})` : r.error || "Échec",
     });
+    results.push(r);
   }
 
   // Update schedule memory + next run
@@ -283,15 +308,25 @@ async function processSchedule(supabase: any, sched: any) {
     next_run_at: next.toISOString(),
     used_urls: newUsedUrls,
     recent_hashes: newHashes,
+    claimed_at: null,
+    claimed_by: null,
   }).eq("id", sched.id);
 
-  const okCount = results.filter((r) => r.ok).length;
+  const okCount = results.filter((r) => r.ok && r.confirmed).length;
   return {
     id: sched.id,
-    ok: okCount > 0,
+    ok: okCount === results.length && results.length > 0,
     published: okCount,
+    failed: results.length - okCount,
     total: results.length,
-    error: results.find((r) => !r.ok)?.error,
+    perTarget: results.map((r) => ({
+      targetId: r.targetId,
+      targetName: r.targetName,
+      ok: !!(r.ok && r.confirmed),
+      urn: r.linkedinId,
+      error: r.error,
+    })),
+    error: results.find((r) => !r.ok || !r.confirmed)?.error,
   };
 
 }
@@ -300,8 +335,9 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const caller = await authorizeCronOrUser(req, supabase);
+    if (!caller) return json(401, { success: false, error: "Unauthorized" });
 
-    // Optional: a single schedule_id for "Run now"
     let runOne: string | null = null;
     if (req.method === "POST") {
       try { const b = await req.json(); runOne = b?.schedule_id || null; } catch { /* noop */ }
@@ -309,16 +345,17 @@ serve(async (req) => {
 
     let due: any[] = [];
     if (runOne) {
-      const { data } = await supabase.from("schedules").select("*").eq("id", runOne).maybeSingle();
-      if (data) due = [data];
+      if (caller.kind === "user") {
+        const { data } = await supabase.from("schedules").select("*").eq("id", runOne).eq("user_id", caller.userId).maybeSingle();
+        if (data) due = [data];
+      } else {
+        const { data } = await supabase.from("schedules").select("*").eq("id", runOne).maybeSingle();
+        if (data) due = [data];
+      }
+    } else if (caller.kind === "cron") {
+      due = await claimDueSchedules(supabase, 5);
     } else {
-      const { data, error } = await supabase
-        .from("schedules").select("*")
-        .eq("enabled", true)
-        .lte("next_run_at", new Date().toISOString())
-        .limit(10);
-      if (error) throw error;
-      due = data || [];
+      return json(400, { success: false, error: "schedule_id required for manual run" });
     }
 
     const results = [];
@@ -326,9 +363,8 @@ serve(async (req) => {
       try { results.push(await processSchedule(supabase, s)); }
       catch (e: any) {
         console.error("schedule failed", s.id, e);
-        // Still bump next_run_at to avoid hammering the same broken schedule
         const next = computeNextRun(s.days_of_week, s.hour, s.minute, s.timezone, new Date(Date.now() + 60_000));
-        await supabase.from("schedules").update({ last_run_at: new Date().toISOString(), next_run_at: next.toISOString() }).eq("id", s.id);
+        await supabase.from("schedules").update({ last_run_at: new Date().toISOString(), next_run_at: next.toISOString(), claimed_at: null }).eq("id", s.id);
         await supabase.from("schedule_runs").insert({
           schedule_id: s.id, user_id: s.user_id, status: "failed", message: e?.message || "Error",
         });

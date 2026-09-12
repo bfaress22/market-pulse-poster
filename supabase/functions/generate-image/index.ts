@@ -189,14 +189,17 @@ serve(async (req) => {
     const { error: upErr } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: "image/png" });
     if (upErr) {
       console.error("upload err", upErr);
-      return json(200, { success: true, imageUrl });
+      return json(500, { success: false, error: "IMAGE_NOT_PERSISTED: impossible d'enregistrer l'image dans le stockage." });
     }
     const { data: signed, error: signErr } = await supabase.storage
       .from("post-assets")
       .createSignedUrl(fileName, 60 * 60 * 24 * 7);
     if (signErr || !signed?.signedUrl) {
       console.error("sign err", signErr);
-      return json(200, { success: true, imageUrl });
+      return json(500, { success: false, error: "IMAGE_NOT_PERSISTED: URL signée introuvable." });
+    }
+    if (signed.signedUrl.startsWith("data:")) {
+      return json(500, { success: false, error: "IMAGE_NOT_PERSISTED: URL data: refusée." });
     }
     return json(200, { success: true, imageUrl: signed.signedUrl });
   } catch (e) {

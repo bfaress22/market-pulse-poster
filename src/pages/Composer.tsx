@@ -30,6 +30,8 @@ import { loadPrefs } from "@/lib/imagePrefs";
 import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
 import TargetSelect from "@/components/TargetSelect";
+import { computeNextRunISO, wallTimeToUtc, formatInZone, isPersistableImageUrl } from "@/lib/scheduleTime";
+import { loadComposerDraft, saveComposerDraft, clearComposerDraft, draftHasWork } from "@/lib/composerDraft";
 
 
 type Mode = "ai" | "manual";
@@ -71,6 +73,8 @@ const Composer = () => {
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleDate, setScheduleDate] = useState<Date | undefined>(undefined);
   const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [scheduleTz, setScheduleTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Paris");
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // Automation (recurring)
   const [autoOpen, setAutoOpen] = useState(false);
@@ -114,15 +118,60 @@ const Composer = () => {
   };
 
   const [busy, setBusy] = useState<string | null>(null);
+  const [quickSubject, setQuickSubject] = useState("");
 
   const charCount = content.length;
   const scheduledISO = useMemo(() => {
     if (!scheduleEnabled || !scheduleDate) return null;
     const [h, m] = scheduleTime.split(":").map(Number);
-    const d = new Date(scheduleDate);
-    d.setHours(h || 0, m || 0, 0, 0);
-    return d.toISOString();
-  }, [scheduleEnabled, scheduleDate, scheduleTime]);
+    const y = scheduleDate.getFullYear();
+    const mo = String(scheduleDate.getMonth() + 1).padStart(2, "0");
+    const d = String(scheduleDate.getDate()).padStart(2, "0");
+    return wallTimeToUtc(`${y}-${mo}-${d}`, h || 0, m || 0, scheduleTz).toISOString();
+  }, [scheduleEnabled, scheduleDate, scheduleTime, scheduleTz]);
+
+  useEffect(() => {
+    if (!user || draftRestored) return;
+    const draft = loadComposerDraft(user.id);
+    if (draftHasWork(draft) && draft) {
+      setTextMode(draft.textMode);
+      setTextPrompt(draft.textPrompt);
+      setContent(draft.content);
+      setTitle(draft.title);
+      setLanguage(draft.language || DEFAULT_LANGUAGE);
+      if (draft.targetIds?.length) setTargetIds(draft.targetIds);
+      setImageMode(draft.imageMode);
+      setImagePrompt(draft.imagePrompt);
+      setImageUrl(draft.imageUrl);
+      setIncludeImage(draft.includeImage);
+      setScheduleEnabled(draft.scheduleEnabled);
+      setScheduleDate(draft.scheduleDate ? new Date(draft.scheduleDate) : undefined);
+      setScheduleTime(draft.scheduleTime || "09:00");
+      setSelectedSourceIds(draft.selectedSourceIds || []);
+      setAdhocSources(draft.adhocSources || []);
+      setQuickSubject(draft.quickSubject || "");
+      toast({ title: "Brouillon récupéré après actualisation." });
+    }
+    setDraftRestored(true);
+  }, [user, draftRestored, toast]);
+
+  useEffect(() => {
+    if (!user || !draftRestored) return;
+    const t = window.setTimeout(() => {
+      saveComposerDraft(user.id, {
+        textMode, textPrompt, content, title, language, targetIds,
+        imageMode, imagePrompt, imageUrl, includeImage,
+        scheduleEnabled,
+        scheduleDate: scheduleDate ? scheduleDate.toISOString() : null,
+        scheduleTime, selectedSourceIds, adhocSources, quickSubject,
+      });
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [
+    user, draftRestored, textMode, textPrompt, content, title, language, targetIds,
+    imageMode, imagePrompt, imageUrl, includeImage, scheduleEnabled, scheduleDate,
+    scheduleTime, selectedSourceIds, adhocSources, quickSubject,
+  ]);
 
   // ---- AI text ----
   const generateText = useMutation({
@@ -185,7 +234,6 @@ const Composer = () => {
   });
 
   // ---- Quick generate: subject → text + image in parallel ----
-  const [quickSubject, setQuickSubject] = useState("");
   const quickGenerate = useMutation({
     mutationFn: async () => {
       const subject = quickSubject.trim();
@@ -328,14 +376,21 @@ const Composer = () => {
       toast({ title: "Choisis une date et une heure", variant: "destructive" });
       return;
     }
+    if (action === "schedule" && scheduledISO && Date.parse(scheduledISO) <= Date.now()) {
+      toast({ title: "L'heure programmée est déjà passée", description: "Choisis un créneau futur.", variant: "destructive" });
+      return;
+    }
     if (action !== "draft" && !targetIds.length) {
       toast({ title: "Choisis au moins une destination LinkedIn", variant: "destructive" });
+      return;
+    }
+    if (includeImage && imageUrl && !isPersistableImageUrl(imageUrl)) {
+      toast({ title: "Image non persistée", description: "L'image data: n'est pas publiable. Régénère ou téléverse-la.", variant: "destructive" });
       return;
     }
     setBusy(action);
     try {
       const status = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
-      // One post row per destination so history and retries stay per-destination.
       const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
       const rows = destinations.map((targetId) => ({
         user_id: user.id,
@@ -352,30 +407,46 @@ const Composer = () => {
       if (action === "publish") {
         const results = await Promise.allSettled(
           (saved ?? []).map(async (p) => {
+            const targetName = targets.find((t) => t.id === p.target_id)?.name || "destination";
             const { data: pub, error: pubErr } = await supabase.functions.invoke("publish-linkedin", {
               body: { postId: p.id, targetId: p.target_id },
             });
-            if (pubErr) throw pubErr;
-            if (!pub?.success) throw new Error(pub?.error || pub?.message || "Publication échouée");
+            if (pubErr) throw new Error(`${targetName} : ${pubErr.message}`);
+            if (!pub?.success || !pub?.linkedinPostId) {
+              throw new Error(`${targetName} : ${pub?.error || pub?.message || "LinkedIn n'a pas confirmé la publication"}`);
+            }
+            return { targetName, urn: pub.linkedinPostId as string };
           }),
         );
+        const ok = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ targetName: string; urn: string }>[];
         const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+        const summary = [
+          ...ok.map((r) => `${r.value.targetName} ✅`),
+          ...failed.map((r) => `${r.reason?.message || "échec"} ❌`),
+        ].join(" · ");
         if (failed.length === results.length) {
-          throw new Error(failed[0]?.reason?.message || "Publication échouée");
+          throw new Error(summary || "Publication échouée");
         }
         toast({
-          title: `Publié sur ${results.length - failed.length}/${results.length} destination(s) 🎉`,
-          description: failed.length ? failed[0]?.reason?.message : undefined,
+          title: failed.length ? "Publication partielle" : `Publié sur ${ok.length} destination(s)`,
+          description: summary,
           variant: failed.length ? "destructive" : undefined,
         });
+        if (failed.length) {
+          queryClient.invalidateQueries({ queryKey: ["posts"] });
+          return;
+        }
       } else if (action === "schedule") {
-        toast({ title: "Programmé", description: `Sera publié le ${format(new Date(scheduledISO!), "PPp")}` });
+        toast({
+          title: "Programmé (en attente d'exécution serveur)",
+          description: `${formatInZone(scheduledISO!, scheduleTz)} (${scheduleTz}) — ${targetIds.length} destination(s)`,
+        });
       } else {
         toast({ title: "Brouillon enregistré" });
       }
 
       queryClient.invalidateQueries({ queryKey: ["posts"] });
-      // reset
+      clearComposerDraft(user.id);
       setContent(""); setTitle(""); setImageUrl(null); setTextPrompt(""); setImagePrompt("");
       setScheduleEnabled(false); setScheduleDate(undefined);
     } catch (e: any) {
@@ -793,6 +864,19 @@ const Composer = () => {
                     </PopoverContent>
                   </Popover>
                   <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="bg-background/40" />
+                  <Select value={scheduleTz} onValueChange={setScheduleTz}>
+                    <SelectTrigger><SelectValue placeholder="Timezone" /></SelectTrigger>
+                    <SelectContent>
+                      {["Europe/Paris","Europe/London","Europe/Berlin","Europe/Madrid","America/New_York","America/Los_Angeles","Asia/Tokyo","Asia/Dubai","UTC"].map((t) => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {scheduledISO && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Exécution UTC : {new Date(scheduledISO).toISOString()} · locale : {formatInZone(scheduledISO, scheduleTz)}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -921,6 +1005,7 @@ const Composer = () => {
               <p>• Texte : IA — prompt actuel</p>
               <p>• Image : {includeImage && imageMode === "ai" ? "générée par IA à chaque run" : "aucune"}</p>
               <p>• Sources : {selectedSourceIds.length + adhocSources.length} liée(s)</p>
+              <p>• Prochaine exécution : {formatInZone(computeNextRunISO(autoDays, autoHour, autoMinute, autoTz), autoTz)} ({autoTz})</p>
             </div>
           </div>
           <DialogFooter>
@@ -939,32 +1024,5 @@ const Composer = () => {
     </div>
   );
 };
-
-// Mirror server-side computeNextRun
-function computeNextRunISO(days: number[], hour: number, minute: number, tz: string): string {
-  const now = new Date();
-  for (let i = 0; i < 14; i++) {
-    const c = new Date(now.getTime() + i * 86400000);
-    const wdName = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(c);
-    const wdMap: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
-    if (!days.includes(wdMap[wdName])) continue;
-    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(c);
-    const [y, m, d] = parts.split("-").map(Number);
-    const local = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
-    const asUTC = new Date(local + "Z").getTime();
-    const tzString = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).format(new Date(asUTC));
-    const mm = tzString.match(/(\d{2})\/(\d{2})\/(\d{4}),?\s+(\d{2}):(\d{2})/);
-    let offsetMin = 0;
-    if (mm) {
-      const tzAsUTC = Date.UTC(+mm[3], +mm[1] - 1, +mm[2], +mm[4], +mm[5]);
-      offsetMin = (asUTC - tzAsUTC) / 60000;
-    }
-    const target = new Date(asUTC + offsetMin * 60000);
-    if (target.getTime() > now.getTime()) return target.toISOString();
-  }
-  return new Date(now.getTime() + 86400000).toISOString();
-}
 
 export default Composer;

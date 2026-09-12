@@ -8,6 +8,8 @@ import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Send, Loader2 } from "lucide-react";
 import { useSignedImage } from "@/hooks/useSignedImage";
+import { POST_STATUS_LABELS, isConfirmedPublished } from "@/lib/publishStatus";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
 
 const PostImage = ({ url }: { url: string }) => {
   const signed = useSignedImage(url);
@@ -27,6 +29,7 @@ const PostDetail = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  const { targets } = useLinkedInTargets();
   const { data: post, isLoading } = useQuery({
     queryKey: ["post", id],
     queryFn: async () => {
@@ -40,6 +43,20 @@ const PostDetail = () => {
     },
   });
 
+  const { data: jobs } = useQuery({
+    queryKey: ["publication_jobs", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("publication_jobs")
+        .select("id, status, attempt_count, linkedin_post_urn, error_code, error_message, last_attempt_at, started_at, completed_at, target_id")
+        .eq("post_id", id!)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   const publishPost = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke("publish-linkedin", {
@@ -49,9 +66,14 @@ const PostDetail = () => {
       if (!data.success) throw new Error(data.error);
       return data;
     },
-    onSuccess: () => {
-      toast({ title: "Published!", description: "Post published to LinkedIn." });
+    onSuccess: (data) => {
+      if (!data?.linkedinPostId) {
+        toast({ title: "Publication non confirmée", description: "LinkedIn n'a pas renvoyé d'URN.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Publié", description: `URN LinkedIn : ${data.linkedinPostId}` });
       queryClient.invalidateQueries({ queryKey: ["post", id] });
+      queryClient.invalidateQueries({ queryKey: ["publication_jobs", id] });
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Failed to publish post.";
@@ -103,7 +125,9 @@ const PostDetail = () => {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Post Preview</CardTitle>
-              <Badge variant="secondary">{post.status}</Badge>
+              <Badge variant="secondary">
+                {isConfirmedPublished(post.status, post.linkedin_post_id) ? "Publié" : (POST_STATUS_LABELS[post.status] || post.status)}
+              </Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -129,14 +153,55 @@ const PostDetail = () => {
                 <span className="text-muted-foreground">Created:</span>
                 <p>{new Date(post.created_at).toLocaleString()}</p>
               </div>
+              {post.target_id && (
+                <div>
+                  <span className="text-muted-foreground">Destination:</span>
+                  <p>{targets.find((t) => t.id === post.target_id)?.name || post.target_id}</p>
+                </div>
+              )}
+              {post.scheduled_at && (
+                <div>
+                  <span className="text-muted-foreground">Programmé pour:</span>
+                  <p>{new Date(post.scheduled_at).toLocaleString()}</p>
+                </div>
+              )}
               {post.published_at && (
                 <div>
-                  <span className="text-muted-foreground">Published:</span>
+                  <span className="text-muted-foreground">Exécuté:</span>
                   <p>{new Date(post.published_at).toLocaleString()}</p>
+                </div>
+              )}
+              {post.linkedin_post_id && (
+                <div>
+                  <span className="text-muted-foreground">URN LinkedIn:</span>
+                  <p className="font-mono text-xs break-all">{post.linkedin_post_id}</p>
+                </div>
+              )}
+              {post.error_message && (
+                <div>
+                  <span className="text-muted-foreground">Erreur:</span>
+                  <p className="text-destructive">{post.error_code ? `${post.error_code} — ` : ""}{post.error_message}</p>
                 </div>
               )}
             </CardContent>
           </Card>
+
+          {!!jobs?.length && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Tentatives</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {jobs.map((j) => (
+                  <div key={j.id} className="border-b last:border-0 pb-2">
+                    <p className="font-medium">{j.status} · {j.attempt_count} essai(s)</p>
+                    {j.linkedin_post_urn && <p className="font-mono text-xs break-all">{j.linkedin_post_urn}</p>}
+                    {j.error_message && <p className="text-destructive text-xs">{j.error_message}</p>}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {post.news_summary && (
             <Card>
@@ -149,7 +214,7 @@ const PostDetail = () => {
             </Card>
           )}
 
-          {["draft", "ready", "failed"].includes(post.status) && (
+          {["draft", "ready", "failed", "retrying"].includes(post.status) && (
             <Button
               onClick={() => publishPost.mutate()}
               disabled={publishPost.isPending}

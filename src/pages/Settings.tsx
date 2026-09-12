@@ -15,34 +15,48 @@ import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Save, Loader2, Link as LinkIcon, CheckCircle, XCircle,
-  AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check, Building2,
+  AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check, Building2, Clock,
 } from "lucide-react";
 import { POST_MODELS, IMAGE_MODELS } from "@/lib/ai-models";
+import type { TablesUpdate } from "@/integrations/supabase/types";
 import { useLinkedInTargets, targetHealth, HEALTH_META } from "@/hooks/useLinkedInTargets";
 
 
 type UserSettings = {
   linkedin_client_id: string | null;
-  linkedin_client_secret: string | null;
-  linkedin_access_token: string | null;
+  linkedin_client_secret?: string | null;
   linkedin_token_expires_at: string | null;
   linkedin_person_urn: string | null;
   linkedin_organization_id: string | null;
   post_model: string;
   image_model: string;
   use_byok: boolean;
-  openai_api_key: string | null;
-  gemini_api_key: string | null;
-  anthropic_api_key: string | null;
-  mistral_api_key: string | null;
-  groq_api_key: string | null;
-  deepseek_api_key: string | null;
-  xai_api_key: string | null;
-  perplexity_api_key: string | null;
-  openrouter_api_key: string | null;
-  firecrawl_api_key: string | null;
+  openai_api_key?: string | null;
+  gemini_api_key?: string | null;
+  anthropic_api_key?: string | null;
+  mistral_api_key?: string | null;
+  groq_api_key?: string | null;
+  deepseek_api_key?: string | null;
+  xai_api_key?: string | null;
+  perplexity_api_key?: string | null;
+  openrouter_api_key?: string | null;
+  firecrawl_api_key?: string | null;
   tone_instructions: string | null;
+  has_linkedin_client_secret?: boolean;
+  has_openai_api_key?: boolean;
+  has_gemini_api_key?: boolean;
+  has_anthropic_api_key?: boolean;
+  has_mistral_api_key?: boolean;
+  has_groq_api_key?: boolean;
+  has_deepseek_api_key?: boolean;
+  has_xai_api_key?: boolean;
+  has_perplexity_api_key?: boolean;
+  has_openrouter_api_key?: boolean;
+  has_firecrawl_api_key?: boolean;
 };
+
+const SAFE_SETTINGS_COLUMNS =
+  "user_id, linkedin_client_id, linkedin_organization_id, linkedin_person_urn, linkedin_token_expires_at, post_model, image_model, use_byok, tone_instructions, created_at, updated_at, has_linkedin_client_secret, has_openai_api_key, has_gemini_api_key, has_anthropic_api_key, has_mistral_api_key, has_groq_api_key, has_deepseek_api_key, has_xai_api_key, has_perplexity_api_key, has_openrouter_api_key, has_firecrawl_api_key";
 
 type ByokProvider = {
   field: keyof UserSettings;
@@ -75,7 +89,7 @@ const Settings = () => {
   const [s, setS] = useState<UserSettings | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [withPages, setWithPages] = useState(false);
+  const [withPages, setWithPages] = useState(true);
   const { targets } = useLinkedInTargets();
 
   const setDefaultTarget = useMutation({
@@ -160,14 +174,13 @@ const Settings = () => {
     queryKey: ["user_settings", user?.id],
     enabled: !!user,
     queryFn: async () => {
-      const { data, error } = await supabase.from("user_settings").select("*").eq("user_id", user!.id).maybeSingle();
+      const { data, error } = await supabase.from("user_settings").select(SAFE_SETTINGS_COLUMNS).eq("user_id", user!.id).maybeSingle();
       if (error) throw error;
-      let base = data as UserSettings | null;
+      let base = data as unknown as UserSettings | null;
       if (!base) {
-        const { data: created } = await supabase.from("user_settings").insert({ user_id: user!.id }).select().single();
-        base = created as UserSettings;
+        const { data: created } = await supabase.from("user_settings").insert({ user_id: user!.id }).select(SAFE_SETTINGS_COLUMNS).single();
+        base = created as unknown as UserSettings;
       }
-      // Merge with localStorage draft (draft wins for unsaved LinkedIn app fields)
       try {
         const raw = localStorage.getItem(LS_KEY(user!.id));
         if (raw) {
@@ -175,12 +188,11 @@ const Settings = () => {
           base = {
             ...base,
             linkedin_client_id: draft.linkedin_client_id ?? base.linkedin_client_id,
-            linkedin_client_secret: draft.linkedin_client_secret ?? base.linkedin_client_secret,
             linkedin_organization_id: draft.linkedin_organization_id ?? base.linkedin_organization_id,
           };
         }
       } catch { /* ignore */ }
-      setS(base);
+      setS({ ...base, linkedin_client_secret: "", openai_api_key: "", gemini_api_key: "", anthropic_api_key: "", mistral_api_key: "", groq_api_key: "", deepseek_api_key: "", xai_api_key: "", perplexity_api_key: "", openrouter_api_key: "", firecrawl_api_key: "" });
       return base;
     },
   });
@@ -191,7 +203,6 @@ const Settings = () => {
     try {
       localStorage.setItem(LS_KEY(user.id), JSON.stringify({
         linkedin_client_id: s.linkedin_client_id,
-        linkedin_client_secret: s.linkedin_client_secret,
         linkedin_organization_id: s.linkedin_organization_id,
       }));
     } catch { /* ignore */ }
@@ -210,25 +221,26 @@ const Settings = () => {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!s || !user) return;
-      const { error } = await supabase.from("user_settings").update({
+      const payload: TablesUpdate<"user_settings"> = {
         linkedin_client_id: s.linkedin_client_id,
-        linkedin_client_secret: s.linkedin_client_secret,
         linkedin_organization_id: s.linkedin_organization_id,
         post_model: s.post_model,
         image_model: s.image_model,
         use_byok: s.use_byok,
-        openai_api_key: s.openai_api_key,
-        gemini_api_key: s.gemini_api_key,
-        anthropic_api_key: s.anthropic_api_key,
-        mistral_api_key: s.mistral_api_key,
-        groq_api_key: s.groq_api_key,
-        deepseek_api_key: s.deepseek_api_key,
-        xai_api_key: s.xai_api_key,
-        perplexity_api_key: s.perplexity_api_key,
-        openrouter_api_key: s.openrouter_api_key,
-        firecrawl_api_key: s.firecrawl_api_key,
         tone_instructions: s.tone_instructions,
-      }).eq("user_id", user.id);
+      };
+      const maybeSecret = (value: string | null | undefined) =>
+        value && value.trim() && !value.startsWith("••••") ? value.trim() : undefined;
+      if (maybeSecret(s.linkedin_client_secret)) payload.linkedin_client_secret = maybeSecret(s.linkedin_client_secret);
+      for (const field of [
+        "openai_api_key", "gemini_api_key", "anthropic_api_key", "mistral_api_key",
+        "groq_api_key", "deepseek_api_key", "xai_api_key", "perplexity_api_key",
+        "openrouter_api_key", "firecrawl_api_key",
+      ] as const) {
+        const v = maybeSecret(s[field]);
+        if (v) payload[field] = v;
+      }
+      const { error } = await supabase.from("user_settings").update(payload).eq("user_id", user.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -272,7 +284,7 @@ const Settings = () => {
   });
 
   const handleConnectLinkedIn = async () => {
-    if (!s?.linkedin_client_id || !s?.linkedin_client_secret) {
+    if (!s?.linkedin_client_id || !(s.linkedin_client_secret || s.has_linkedin_client_secret)) {
       toast({ title: "Identifiants requis", description: "Enregistre d'abord ton Client ID & Secret.", variant: "destructive" });
       return;
     }
@@ -344,15 +356,14 @@ const Settings = () => {
     return <div className="p-8 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   }
 
-  const expiresAt = s.linkedin_token_expires_at ? new Date(s.linkedin_token_expires_at) : null;
-  const isExpired = expiresAt ? expiresAt.getTime() < Date.now() : false;
-  const hasLinkedIn = !!(s.linkedin_access_token && s.linkedin_person_urn);
-  const isConnected = hasLinkedIn && !isExpired;
-  const hasAppCreds = !!(s.linkedin_client_id && s.linkedin_client_secret);
+  const hasLinkedIn = targets.some((t) => t.status === "connected");
+  const isConnected = hasLinkedIn;
+  const hasAppCreds = !!(s.linkedin_client_id && (s.linkedin_client_secret || s.has_linkedin_client_secret));
 
   const sections = [
     { id: "linkedin-app", label: "App LinkedIn", icon: KeyRound },
     { id: "linkedin-targets", label: "Destinations LinkedIn", icon: Linkedin },
+    { id: "automation", label: "Automatisation serveur", icon: Clock },
     { id: "sources", label: "Sources de contenu", icon: BookMarked },
     { id: "ai-models", label: "IA & BYOK", icon: Sparkles },
   ];
@@ -427,7 +438,7 @@ const Settings = () => {
           </div>
           <div className="space-y-1">
             <Label>Client Secret</Label>
-            <Input type="password" value={s.linkedin_client_secret || ""} onChange={(e) => setS({ ...s, linkedin_client_secret: e.target.value })} placeholder="WPL_AP1..." />
+            <Input type="password" value={s.linkedin_client_secret || ""} onChange={(e) => setS({ ...s, linkedin_client_secret: e.target.value })} placeholder={s.has_linkedin_client_secret ? "•••• enregistré — saisis une nouvelle valeur pour remplacer" : "WPL_AP1..."} />
           </div>
           <div className="space-y-1">
             <Label>ID de Page LinkedIn (Organisation) — optionnel</Label>
@@ -512,6 +523,37 @@ const Settings = () => {
         </CardContent>
       </Card>
 
+      <Card id="automation" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Clock className="h-5 w-5" /> Automatisation serveur</CardTitle>
+          <CardDescription>
+            Le moteur de publication ne dépend pas du navigateur. Active pg_cron ici pour que les programmations s'exécutent même si tu fermes l'onglet.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const { data, error } = await supabase.functions.invoke("setup-automation");
+              if (error || !data?.success) {
+                toast({
+                  title: "Cron non confirmé",
+                  description: data?.error || error?.message || "Vérifie que pg_cron et pg_net sont activés sur le projet Supabase.",
+                  variant: "destructive",
+                });
+                return;
+              }
+              const names = (data.jobs || []).map((j: { jobname?: string; schedule?: string }) => `${j.jobname} (${j.schedule})`).join(", ");
+              toast({ title: "Cron actif", description: names || "Jobs mpp-* planifiés chaque minute." });
+            }}
+          >
+            Activer / vérifier le cron
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Après activation, trois jobs tournent chaque minute : publish-scheduled, run-schedules, run-topic-queue.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Content Sources */}
       <Card id="sources" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
@@ -610,7 +652,7 @@ const Settings = () => {
                         autoComplete="off"
                         value={(s[p.field] as string | null) || ""}
                         onChange={(e) => setS({ ...s, [p.field]: e.target.value } as UserSettings)}
-                        placeholder={p.placeholder}
+                        placeholder={(s as Record<string, unknown>)[`has_${p.field}`] ? "•••• enregistré — saisis pour remplacer" : p.placeholder}
                       />
                       <p className="text-[11px] text-muted-foreground">
                         {p.hint}{" "}
@@ -625,7 +667,7 @@ const Settings = () => {
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Sources de contenu (scraping & recherche)</p>
                 <div className="space-y-1">
                   <Label>Clé API Firecrawl</Label>
-                  <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder="fc-..." />
+                  <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-..."} />
                   <p className="text-[11px] text-muted-foreground">
                     Utilisée pour scraper les URLs et faire les recherches web (mots-clés) dans tes Sources.{" "}
                     <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Récupérer la clé →</a>

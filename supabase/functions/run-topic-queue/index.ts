@@ -2,12 +2,16 @@
 // generates the post text in the requested language (+ optional image), then publishes to LinkedIn.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveTargets, publishToTargets } from "../_shared/linkedin.ts";
+import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
+import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
+import { claimDueTopics, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
+import { makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
+import { jobLog } from "../_shared/logger.ts";
 
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 const json = (s: number, b: unknown) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -110,42 +114,84 @@ async function processTopic(supabase: any, topic: any) {
     model, key, url,
   });
 
-  const imageUrl = topic.include_image
-    ? await generateImage(topic.subject, us?.image_model ?? null, supabase, userId)
-    : null;
+  let imageUrl: string | null = null;
+  if (topic.include_image) {
+    imageUrl = await generateImage(topic.subject, us?.image_model ?? null, supabase, userId);
+    if (!isPersistableImageUrl(imageUrl)) {
+      throw new Error("IMAGE_NOT_PERSISTED: génération ou stockage image en échec.");
+    }
+  }
 
   const { targets, error: targetError } = await resolveTargets(supabase, userId, topic.target_ids);
   if (targetError || !targets.length) throw new Error(targetError || "Aucune destination LinkedIn");
 
-  const results = await publishToTargets(supabase, targets, generated.content, imageUrl);
-
+  const executionId = topic.scheduled_at || topic.id;
+  const results = [];
   let firstPostId: string | null = null;
-  for (const r of results) {
+  for (const target of targets) {
     const { data: insertedPost } = await supabase.from("posts").insert({
       user_id: userId,
       title: generated.title,
       content: generated.content,
       image_url: imageUrl,
-      status: r.ok ? "published" : "failed",
-      published_at: r.ok ? new Date().toISOString() : null,
-      linkedin_post_id: r.linkedinId || null,
+      status: "processing",
       scheduled_at: topic.scheduled_at,
-      target_id: r.targetId,
+      target_id: target.id,
     }).select("id").single();
-    if (!firstPostId) firstPostId = insertedPost?.id ?? null;
+    const postId = insertedPost?.id ?? null;
+    if (!firstPostId) firstPostId = postId;
+
+    const idempotencyKey = makeIdempotencyKey({
+      postId, targetId: target.id, executionId: `topic:${topic.id}:${executionId}`,
+    });
+    const claim = await upsertAndClaimJob(supabase, {
+      userId, postId, targetId: target.id, topicId: topic.id, idempotencyKey, scheduledFor: topic.scheduled_at,
+    });
+
+    let r;
+    if (claim.action === "already_success") {
+      r = { ok: true, confirmed: true, targetId: target.id, targetName: target.name, linkedinId: claim.job.linkedin_post_urn, error: undefined };
+    } else if (claim.action === "in_flight" || claim.action === "terminal_failed") {
+      r = { ok: false, confirmed: false, targetId: target.id, targetName: target.name, linkedinId: undefined, error: claim.job.error_message || claim.action };
+    } else {
+      jobLog("JOB_STARTED", { job: claim.job.id, target: target.name, topic: topic.id });
+      r = await publishLinkedInPost({
+        supabase, target, content: generated.content, image: imageUrl, idempotencyKey, requireImage: !!topic.include_image,
+      });
+      await finalizeJob(supabase, {
+        jobId: claim.job.id,
+        ok: r.ok && r.confirmed,
+        retryable: r.retryable,
+        urn: r.linkedinId,
+        errorCode: r.code,
+        errorMessage: r.error,
+        providerStatus: r.providerStatus,
+      });
+    }
+    const published = !!(r.ok && r.confirmed && r.linkedinId);
+    if (postId) {
+      await supabase.from("posts").update({
+        status: published ? "published" : "failed",
+        published_at: published ? new Date().toISOString() : null,
+        linkedin_post_id: r.linkedinId || null,
+        error_code: published ? null : (r as any).code,
+        error_message: published ? null : r.error,
+      }).eq("id", postId);
+    }
+    results.push(r);
   }
 
-  const okCount = results.filter((r) => r.ok).length;
-  const errors = results.filter((r) => !r.ok).map((r) => r.error).join(" | ");
+  const okCount = results.filter((r) => r.ok && r.confirmed).length;
+  const errors = results.filter((r) => !r.ok || !r.confirmed).map((r) => r.error).join(" | ");
 
   await supabase.from("topic_queue").update({
-    status: okCount > 0 ? "published" : "failed",
+    status: okCount === results.length && results.length > 0 ? "published" : okCount > 0 ? "failed" : "failed",
     error: errors || null,
     post_id: firstPostId,
     processed_at: new Date().toISOString(),
   }).eq("id", topic.id);
 
-  return { id: topic.id, ok: okCount > 0, published: okCount, total: results.length, error: errors || undefined };
+  return { id: topic.id, ok: okCount === results.length, published: okCount, total: results.length, error: errors || undefined };
 
 }
 
@@ -153,6 +199,8 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const caller = await authorizeCronOrUser(req, supabase);
+    if (!caller) return json(401, { success: false, error: "Unauthorized" });
 
     let runOne: string | null = null;
     if (req.method === "POST") {
@@ -161,22 +209,20 @@ serve(async (req) => {
 
     let due: any[] = [];
     if (runOne) {
-      const { data } = await supabase.from("topic_queue").select("*").eq("id", runOne).maybeSingle();
+      const q = supabase.from("topic_queue").select("*").eq("id", runOne);
+      const { data } = caller.kind === "user" ? await q.eq("user_id", caller.userId).maybeSingle() : await q.maybeSingle();
       if (data) due = [data];
+    } else if (caller.kind === "cron") {
+      due = await claimDueTopics(supabase, 5);
     } else {
-      const { data, error } = await supabase
-        .from("topic_queue").select("*")
-        .eq("status", "scheduled_topic")
-        .lte("scheduled_at", new Date().toISOString())
-        .limit(10);
-      if (error) throw error;
-      due = data || [];
+      return json(400, { success: false, error: "topic_id required for manual run" });
     }
 
     const results = [];
     for (const t of due) {
-      // Claim it first to avoid double-processing
-      await supabase.from("topic_queue").update({ status: "generating" }).eq("id", t.id);
+      if (runOne) {
+        await supabase.from("topic_queue").update({ status: "generating" }).eq("id", t.id);
+      }
       try {
         results.push(await processTopic(supabase, t));
       } catch (e: any) {

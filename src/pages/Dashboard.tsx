@@ -8,6 +8,8 @@ import {
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useSignedImage } from "@/hooks/useSignedImage";
+import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
+import { POST_STATUS_LABELS, POST_STATUS_BADGE } from "@/lib/publishStatus";
 
 const Thumb = ({ url }: { url: string }) => {
   const signed = useSignedImage(url);
@@ -33,19 +35,15 @@ const STATUS_COLORS: Record<string, string> = {
   draft: "hsl(var(--muted-foreground))",
   ready: "hsl(var(--primary))",
   scheduled: "hsl(var(--accent))",
+  queued: "hsl(38 92% 50%)",
+  processing: "hsl(217 91% 60%)",
+  retrying: "hsl(25 95% 53%)",
   published: "hsl(var(--success))",
   failed: "hsl(var(--destructive))",
   generating: "hsl(var(--accent))",
 };
 
-const statusBadge: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  generating: "bg-accent/20 text-accent-foreground",
-  ready: "bg-primary/10 text-primary",
-  scheduled: "bg-accent/15 text-accent-foreground",
-  published: "bg-[hsl(var(--success))]/10 text-[hsl(var(--success))]",
-  failed: "bg-destructive/10 text-destructive",
-};
+const statusBadge = POST_STATUS_BADGE;
 
 const Dashboard = () => {
   const { data: posts, isLoading } = useQuery({
@@ -57,29 +55,29 @@ const Dashboard = () => {
     },
   });
 
-  const { data: settings } = useQuery({
-    queryKey: ["user_settings_status"],
+  const { targets } = useLinkedInTargets();
+  const linkedInConnected = targets.some((t) => t.status === "connected");
+
+  const { data: jobs } = useQuery({
+    queryKey: ["publication_jobs"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("user_settings")
-        .select("linkedin_access_token, linkedin_person_urn, linkedin_token_expires_at")
-        .maybeSingle();
-      return data;
+      const { data, error } = await supabase
+        .from("publication_jobs")
+        .select("id, post_id, target_id, schedule_id, status, attempt_count, scheduled_for, started_at, completed_at, linkedin_post_urn, error_code, error_message, last_attempt_at, created_at")
+        .order("created_at", { ascending: false })
+        .limit(40);
+      if (error) throw error;
+      return data ?? [];
     },
   });
-
-  const linkedInConnected = !!(
-    settings?.linkedin_access_token &&
-    settings?.linkedin_person_urn &&
-    (!settings?.linkedin_token_expires_at || new Date(settings.linkedin_token_expires_at).getTime() > Date.now())
-  );
 
   const stats = useMemo(() => {
     const total = posts?.length || 0;
     const published = posts?.filter((p) => p.status === "published").length || 0;
-    const scheduled = posts?.filter((p) => p.status === "scheduled").length || 0;
+    const scheduled = posts?.filter((p) => ["scheduled", "queued"].includes(p.status)).length || 0;
     const drafts = posts?.filter((p) => ["draft", "ready"].includes(p.status)).length || 0;
     const failed = posts?.filter((p) => p.status === "failed").length || 0;
+    const processing = posts?.filter((p) => ["processing", "retrying", "generating"].includes(p.status)).length || 0;
     const successRate = total ? Math.round((published / total) * 100) : 0;
 
     // Last 14 days activity
@@ -97,15 +95,15 @@ const Dashboard = () => {
       };
     });
 
-    const breakdown = ["draft", "ready", "scheduled", "published", "failed"].map((s) => ({
+    const breakdown = ["draft", "ready", "scheduled", "queued", "processing", "retrying", "published", "failed"].map((s) => ({
       name: s,
       value: posts?.filter((p) => p.status === s).length || 0,
     })).filter((d) => d.value > 0);
 
-    return { total, published, scheduled, drafts, failed, successRate, days, breakdown };
+    return { total, published, scheduled, drafts, failed, processing, successRate, days, breakdown };
   }, [posts]);
 
-  const upcoming = posts?.filter((p) => p.status === "scheduled").slice(0, 5) || [];
+  const upcoming = posts?.filter((p) => ["scheduled", "queued", "processing", "retrying"].includes(p.status)).slice(0, 5) || [];
   const recent = posts?.slice(0, 6) || [];
 
   if (isLoading) {
@@ -146,11 +144,12 @@ const Dashboard = () => {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         {[
           { label: "Total", value: stats.total, icon: FileText, color: "text-blue-400", bg: "from-blue-500/20 to-cyan-400/10" },
           { label: "Publiés", value: stats.published, icon: CheckCircle2, color: "text-emerald-400", bg: "from-emerald-500/20 to-teal-400/10" },
-          { label: "Programmés", value: stats.scheduled, icon: Calendar, color: "text-purple-400", bg: "from-purple-500/20 to-pink-400/10" },
+          { label: "Programmés / file", value: stats.scheduled, icon: Calendar, color: "text-purple-400", bg: "from-purple-500/20 to-pink-400/10" },
+          { label: "En cours", value: stats.processing, icon: Clock, color: "text-sky-400", bg: "from-sky-500/20 to-blue-400/10" },
           { label: "Brouillons", value: stats.drafts, icon: Clock, color: "text-amber-400", bg: "from-amber-500/20 to-orange-400/10" },
           { label: "Taux succès", value: `${stats.successRate}%`, icon: BarChart3, color: "text-primary", bg: "from-primary/20 to-accent/10" },
         ].map((s) => (
@@ -287,8 +286,8 @@ const Dashboard = () => {
                         {format(new Date(p.created_at), "PP")}
                       </p>
                     </div>
-                    <Badge className={cn("capitalize border-0 text-xs", statusBadge[p.status])} variant="secondary">
-                      {p.status}
+                    <Badge className={cn("capitalize border-0 text-xs", statusBadge[p.status] || statusBadge.draft)} variant="secondary">
+                      {p.status === "published" && !p.linkedin_post_id ? "En attente confirmation" : (POST_STATUS_LABELS[p.status] || p.status)}
                     </Badge>
                   </Link>
                 ))}
@@ -297,6 +296,39 @@ const Dashboard = () => {
           </CardContent>
         </Card>
       </div>
+
+      {!!jobs?.length && (
+        <Card className="mt-6 border-border/50 bg-card/60 backdrop-blur-xl">
+          <CardHeader className="border-b border-border/40">
+            <CardTitle className="text-base">Jobs de publication</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 space-y-2">
+            {jobs.slice(0, 12).map((j) => {
+              const targetName = targets.find((t) => t.id === j.target_id)?.name || "—";
+              const post = posts?.find((p) => p.id === j.post_id);
+              return (
+                <div key={j.id} className="flex items-center gap-3 text-sm py-2 border-b border-border/40 last:border-0">
+                  <Badge className={cn("border-0 text-xs", statusBadge[j.status === "success" ? "published" : j.status] || statusBadge.draft)} variant="secondary">
+                    {j.status}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate font-medium">{targetName} · {post?.title || "Post"}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {j.linkedin_post_urn || j.error_message || j.error_code || "—"}
+                      {j.attempt_count ? ` · ${j.attempt_count} essai(s)` : ""}
+                    </p>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {j.completed_at || j.started_at || j.scheduled_for
+                      ? format(new Date(j.completed_at || j.started_at || j.scheduled_for || j.created_at), "dd MMM HH:mm")
+                      : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {stats.failed > 0 && (
         <Card className="mt-6 border-destructive/30 bg-destructive/5">

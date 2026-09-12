@@ -79,11 +79,20 @@ export default function Schedules() {
       if (!data?.success) throw new Error(data?.error || "Échec");
       const r = data.results?.[0];
       if (r && !r.ok) throw new Error(r.error || "Échec");
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["schedules"] });
       qc.invalidateQueries({ queryKey: ["schedule_runs"] });
-      toast.success("Publié !");
+      const r = data?.results?.[0];
+      const per = r?.perTarget as { targetName: string; ok: boolean; urn?: string; error?: string }[] | undefined;
+      if (per?.length) {
+        const line = per.map((t) => `${t.targetName} ${t.ok ? "✅" : "❌"}`).join(" · ");
+        if (per.every((t) => t.ok)) toast.success(line);
+        else toast.error(line);
+        return;
+      }
+      toast.success(r?.ok ? "Exécution terminée" : "Exécution partielle");
     },
     onError: (e: any) => toast.error(e?.message || "Échec"),
   });
@@ -140,8 +149,8 @@ export default function Schedules() {
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{s.prompt}</p>
                   <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                    {s.next_run_at && <span>Prochain : {format(new Date(s.next_run_at), "dd MMM HH:mm")}</span>}
-                    {s.last_run_at && <span>Dernier : {format(new Date(s.last_run_at), "dd MMM HH:mm")}</span>}
+                    {s.next_run_at && <span>Prochain : {format(new Date(s.next_run_at), "dd MMM HH:mm")} UTC · {s.timezone}</span>}
+                    {s.last_run_at && <span>Dernier : {format(new Date(s.last_run_at), "dd MMM HH:mm")} UTC</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

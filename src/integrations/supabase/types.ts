@@ -119,13 +119,116 @@ export type Database = {
         }
         Relationships: []
       }
+      publication_attempts: {
+        Row: {
+          attempt_number: number
+          completed_at: string | null
+          error_message: string | null
+          id: string
+          publication_job_id: string
+          provider_response: Json | null
+          provider_status: number | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          attempt_number: number
+          completed_at?: string | null
+          error_message?: string | null
+          id?: string
+          publication_job_id: string
+          provider_response?: Json | null
+          provider_status?: number | null
+          started_at?: string
+          status: string
+        }
+        Update: {
+          attempt_number?: number
+          completed_at?: string | null
+          error_message?: string | null
+          id?: string
+          publication_job_id?: string
+          provider_response?: Json | null
+          provider_status?: number | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      publication_jobs: {
+        Row: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          idempotency_key: string
+          last_attempt_at: string | null
+          linkedin_post_urn: string | null
+          post_id: string | null
+          schedule_id: string | null
+          scheduled_for: string | null
+          started_at: string | null
+          status: string
+          target_id: string | null
+          topic_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          idempotency_key: string
+          last_attempt_at?: string | null
+          linkedin_post_urn?: string | null
+          post_id?: string | null
+          schedule_id?: string | null
+          scheduled_for?: string | null
+          started_at?: string | null
+          status?: string
+          target_id?: string | null
+          topic_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          idempotency_key?: string
+          last_attempt_at?: string | null
+          linkedin_post_urn?: string | null
+          post_id?: string | null
+          schedule_id?: string | null
+          scheduled_for?: string | null
+          started_at?: string | null
+          status?: string
+          target_id?: string | null
+          topic_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       posts: {
         Row: {
+          attempt_count: number
           content: string
           content_hash: string | null
           created_at: string
+          error_code: string | null
+          error_message: string | null
           id: string
           image_url: string | null
+          last_attempt_at: string | null
           linkedin_post_id: string | null
           news_summary: string | null
           published_at: string | null
@@ -137,11 +240,15 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          attempt_count?: number
           content: string
           content_hash?: string | null
           created_at?: string
+          error_code?: string | null
+          error_message?: string | null
           id?: string
           image_url?: string | null
+          last_attempt_at?: string | null
           linkedin_post_id?: string | null
           news_summary?: string | null
           published_at?: string | null
@@ -153,11 +260,15 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          attempt_count?: number
           content?: string
           content_hash?: string | null
           created_at?: string
+          error_code?: string | null
+          error_message?: string | null
           id?: string
           image_url?: string | null
+          last_attempt_at?: string | null
           linkedin_post_id?: string | null
           news_summary?: string | null
           published_at?: string | null
@@ -263,6 +374,8 @@ export type Database = {
         Row: {
           adhoc_sources: Json
           ai_model: string | null
+          claimed_at: string | null
+          claimed_by: string | null
           created_at: string
           days_of_week: number[]
           enabled: boolean
@@ -418,6 +531,17 @@ export type Database = {
           use_byok: boolean
           user_id: string
           xai_api_key: string | null
+          has_linkedin_client_secret: boolean | null
+          has_openai_api_key: boolean | null
+          has_gemini_api_key: boolean | null
+          has_anthropic_api_key: boolean | null
+          has_mistral_api_key: boolean | null
+          has_groq_api_key: boolean | null
+          has_deepseek_api_key: boolean | null
+          has_xai_api_key: boolean | null
+          has_perplexity_api_key: boolean | null
+          has_openrouter_api_key: boolean | null
+          has_firecrawl_api_key: boolean | null
         }
         Insert: {
           anthropic_api_key?: string | null

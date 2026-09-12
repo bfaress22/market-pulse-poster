@@ -1,1 +1,20 @@
 project_id = "vlkirfionnppaoprsnuh"
+
+# Cron callers send X-Cron-Secret (or CRON_SECRET bearer). Functions verify that themselves.
+[functions.publish-scheduled]
+verify_jwt = false
+
+[functions.run-schedules]
+verify_jwt = false
+
+[functions.run-topic-queue]
+verify_jwt = false
+
+[functions.setup-automation]
+verify_jwt = true
+
+[functions.publish-linkedin]
+verify_jwt = true
+
+[functions.linkedin-oauth]
+verify_jwt = true

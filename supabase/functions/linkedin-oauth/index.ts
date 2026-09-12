@@ -207,6 +207,7 @@ serve(async (req) => {
       }
 
       const accessToken = tokenData.access_token as string;
+      const refreshToken = (tokenData.refresh_token as string | undefined) || null;
       const expiresAt = tokenData.expires_in
         ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
         : null;
@@ -244,8 +245,8 @@ serve(async (req) => {
       if (personUrn) {
         targetRows.push({
           user_id: userId, kind: "person", urn: personUrn, name: personName,
-          avatar_url: personAvatar, access_token: accessToken, token_expires_at: expiresAt,
-          scopes: grantedScopes, status: "connected",
+          avatar_url: personAvatar, access_token: accessToken, refresh_token: refreshToken,
+          token_expires_at: expiresAt, scopes: grantedScopes, status: "connected",
         });
       }
 
@@ -253,27 +254,59 @@ serve(async (req) => {
       let pagesError: string | null = null;
       if (grantedScopes.includes("organization")) {
         try {
-          const aclRes = await fetch(
-            "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&projection=(elements*(organization~(id,localizedName,logoV2)))",
-            { headers: { Authorization: `Bearer ${accessToken}`, "X-Restli-Protocol-Version": "2.0.0" } },
-          );
-          if (aclRes.ok) {
-            const acl = await aclRes.json();
+          const headers = {
+            Authorization: `Bearer ${accessToken}`,
+            "X-Restli-Protocol-Version": "2.0.0",
+            "Linkedin-Version": "202608",
+          };
+          const urls = [
+            "https://api.linkedin.com/rest/organizationAcls?q=roleAssignee&state=APPROVED",
+            "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&state=APPROVED&projection=(elements*(role,state,organization~(id,localizedName)))",
+          ];
+          let acl: { elements?: any[] } | null = null;
+          let lastStatus = 0;
+          let lastBody = "";
+          for (const url of urls) {
+            const aclRes = await fetch(url, { headers });
+            lastStatus = aclRes.status;
+            if (aclRes.ok) {
+              acl = await aclRes.json();
+              break;
+            }
+            lastBody = await aclRes.text();
+          }
+          if (acl) {
+            const allowedRoles = new Set(["ADMINISTRATOR", "CONTENT_ADMINISTRATOR", "DIRECT_SPONSORED_CONTENT_POSTER"]);
+            const seen = new Set<string>();
             for (const el of acl.elements ?? []) {
+              const role = el.role as string | undefined;
+              if (role && !allowedRoles.has(role)) continue;
               const org = el["organization~"] ?? {};
               const rawUrn: string = el.organization ?? (org.id ? `urn:li:organization:${org.id}` : "");
-              if (!rawUrn) continue;
+              if (!rawUrn || seen.has(rawUrn)) continue;
+              seen.add(rawUrn);
+              let name = org.localizedName as string | undefined;
+              if (!name) {
+                const orgId = rawUrn.split(":").pop();
+                const orgRes = await fetch(`https://api.linkedin.com/rest/organizations/${orgId}`, { headers });
+                if (orgRes.ok) {
+                  const orgJson = await orgRes.json();
+                  name = orgJson.localizedName || orgJson.vanityName;
+                }
+              }
               targetRows.push({
                 user_id: userId, kind: "organization", urn: rawUrn,
-                name: org.localizedName || `Page ${rawUrn.split(":").pop()}`,
-                access_token: accessToken, token_expires_at: expiresAt,
-                scopes: grantedScopes, status: "connected",
+                name: name || `Page ${rawUrn.split(":").pop()}`,
+                access_token: accessToken, refresh_token: refreshToken,
+                token_expires_at: expiresAt, scopes: grantedScopes, status: "connected",
               });
             }
+            if (!seen.size) {
+              pagesError = "Aucune Page administrée trouvée (rôles ADMINISTRATOR / CONTENT_ADMINISTRATOR).";
+            }
           } else {
-            const aclBody = await readProviderBody(aclRes);
-            pagesError = `LinkedIn a refusé la liste des Pages (${aclRes.status}).`;
-            console.error("[linkedin-oauth] organizationAcls error", { requestId, status: aclRes.status, body: aclBody.raw });
+            pagesError = `LinkedIn a refusé la liste des Pages (${lastStatus}).`;
+            console.error("[linkedin-oauth] organizationAcls error", { requestId, status: lastStatus, body: lastBody.slice(0, 400) });
           }
         } catch (e) {
           pagesError = "Impossible de récupérer les Pages LinkedIn administrées.";
@@ -298,9 +331,8 @@ serve(async (req) => {
         await supabase.from("linkedin_targets").update({ is_default: true }).eq("id", existing[0].id);
       }
 
-      // Legacy fields kept in sync for backwards compatibility
+      // Metadata only — access tokens stay on linkedin_targets (server-side).
       const { error: updateError } = await supabase.from("user_settings").update({
-        linkedin_access_token: accessToken,
         linkedin_token_expires_at: expiresAt,
         linkedin_person_urn: personUrn || null,
       }).eq("user_id", userId);
