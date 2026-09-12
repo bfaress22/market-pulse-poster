@@ -8,7 +8,7 @@ import {
   retryBackoffMs,
   wallTimeToUtc,
 } from "@/lib/scheduleTime";
-import { isConfirmedPublished } from "@/lib/publishStatus";
+import { isConfirmedPublished, POST_ALLOWED_STATUSES } from "@/lib/publishStatus";
 
 describe("scheduleTime", () => {
   it("computes a future next run in Europe/Paris", () => {
@@ -71,6 +71,13 @@ describe("image urls", () => {
     expect(isPersistableImageUrl("data:image/png;base64,aaa")).toBe(false);
     expect(isPersistableImageUrl("https://example.com/x.png")).toBe(true);
     expect(isPersistableImageUrl(null)).toBe(false);
+  });
+});
+
+describe("post statuses", () => {
+  it("includes scheduled so Composer Programmer matches the CHECK", () => {
+    expect(POST_ALLOWED_STATUSES).toContain("scheduled");
+    expect(POST_ALLOWED_STATUSES).toContain("published");
   });
 });
 

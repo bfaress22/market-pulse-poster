@@ -32,6 +32,7 @@ import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
 import TargetSelect from "@/components/TargetSelect";
 import { computeNextRunISO, wallTimeToUtc, formatInZone, isPersistableImageUrl } from "@/lib/scheduleTime";
 import { loadComposerDraft, saveComposerDraft, clearComposerDraft, draftHasWork } from "@/lib/composerDraft";
+import type { PostStatus } from "@/lib/publishStatus";
 
 
 type Mode = "ai" | "manual";
@@ -390,7 +391,7 @@ const Composer = () => {
     }
     setBusy(action);
     try {
-      const status = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
+      const status: PostStatus = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
       const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
       const rows = destinations.map((targetId) => ({
         user_id: user.id,

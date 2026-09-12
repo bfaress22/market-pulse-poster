@@ -1,3 +1,18 @@
+/** Must match public.posts_status_check (see supabase/migrations). */
+export const POST_ALLOWED_STATUSES = [
+  "draft",
+  "generating",
+  "ready",
+  "scheduled",
+  "queued",
+  "processing",
+  "retrying",
+  "published",
+  "failed",
+] as const;
+
+export type PostStatus = (typeof POST_ALLOWED_STATUSES)[number];
+
 export const POST_STATUS_LABELS: Record<string, string> = {
   draft: "Brouillon",
   ready: "Prêt",
