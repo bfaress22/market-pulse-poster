@@ -224,8 +224,46 @@ const Dashboard = () => {
         </Card>
       </div>
 
-      {/* Upcoming + Recent */}
-      <div className="grid lg:grid-cols-2 gap-6">
+      {/* Drafts + Upcoming + Recent */}
+      <div className="grid lg:grid-cols-3 gap-6">
+        <Card className="border-border/50 bg-card/60 backdrop-blur-xl">
+          <CardHeader className="border-b border-border/40">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileText className="h-4 w-4 text-amber-400" /> Brouillons
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            {drafts.length === 0 ? (
+              <div className="text-center py-10 text-sm text-muted-foreground">Aucun brouillon enregistré.</div>
+            ) : (
+              <div className="space-y-2">
+                {drafts.map((p) => (
+                  <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-background/40 transition">
+                    <Link to={`/post/${p.id}`} className="flex items-center gap-3 flex-1 min-w-0">
+                      {p.image_url ? (
+                        <Thumb url={p.image_url} />
+                      ) : (
+                        <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-400/10 flex items-center justify-center shrink-0">
+                          <FileText className="h-4 w-4 text-amber-400/80" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{p.title}</p>
+                        <p className="text-xs text-muted-foreground">{format(new Date(p.created_at), "PP")}</p>
+                      </div>
+                    </Link>
+                    <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
+                      <Link to={`/composer?post=${p.id}`}>
+                        <Pencil className="h-3.5 w-3.5" /> Modifier
+                      </Link>
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card className="border-border/50 bg-card/60 backdrop-blur-xl">
           <CardHeader className="border-b border-border/40">
             <CardTitle className="text-base flex items-center gap-2">
