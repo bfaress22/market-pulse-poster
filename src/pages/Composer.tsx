@@ -426,18 +426,38 @@ const Composer = () => {
     setBusy(action);
     try {
       const status: PostStatus = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
-      const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
-      const rows = destinations.map((targetId) => ({
-        user_id: user.id,
-        title: title || content.slice(0, 60),
-        content,
-        image_url: includeImage ? imageUrl : null,
-        status,
-        scheduled_at: action === "schedule" ? scheduledISO : null,
-        target_id: targetId,
-      }));
-      const { data: saved, error } = await supabase.from("posts").insert(rows).select();
-      if (error) throw error;
+      let saved: any[];
+      if (editPostId) {
+        // Editing an existing post: update the single row
+        const { data: updated, error } = await supabase
+          .from("posts")
+          .update({
+            title: title || content.slice(0, 60),
+            content,
+            image_url: includeImage ? imageUrl : null,
+            status,
+            scheduled_at: action === "schedule" ? scheduledISO : null,
+            target_id: targetIds[0] ?? null,
+          })
+          .eq("id", editPostId)
+          .select();
+        if (error) throw error;
+        saved = updated ?? [];
+      } else {
+        const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
+        const rows = destinations.map((targetId) => ({
+          user_id: user.id,
+          title: title || content.slice(0, 60),
+          content,
+          image_url: includeImage ? imageUrl : null,
+          status,
+          scheduled_at: action === "schedule" ? scheduledISO : null,
+          target_id: targetId,
+        }));
+        const { data: inserted, error } = await supabase.from("posts").insert(rows).select();
+        if (error) throw error;
+        saved = inserted ?? [];
+      }
 
       if (action === "publish") {
         const results = await Promise.allSettled(
