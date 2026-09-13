@@ -15,6 +15,13 @@
       "when": 1789325823672,
       "tag": "0001_add_publication_jobs_and_post_error_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789326314998,
+      "tag": "0002_widen_posts_status_check",
+      "breakpoints": true
     }
   ]
 }
