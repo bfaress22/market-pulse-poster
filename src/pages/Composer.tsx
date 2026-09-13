@@ -133,8 +133,40 @@ const Composer = () => {
     return wallTimeToUtc(`${y}-${mo}-${d}`, h || 0, m || 0, scheduleTz).toISOString();
   }, [scheduleEnabled, scheduleDate, scheduleTime, scheduleTz]);
 
+  // Load an existing post when opened with ?post=<id> (editing a draft)
+  const [loadedPostId, setLoadedPostId] = useState<string | null>(null);
+  useQuery({
+    queryKey: ["composer-edit-post", editPostId],
+    enabled: !!user && !!editPostId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("posts")
+        .select("*")
+        .eq("id", editPostId!)
+        .single();
+      if (error) throw error;
+      if (loadedPostId !== data.id) {
+        setTitle(data.title || "");
+        setContent(data.content || "");
+        setImageUrl(data.image_url);
+        setIncludeImage(!!data.image_url);
+        setTextMode("manual");
+        if (data.target_id) setTargetIds([data.target_id]);
+        if (data.scheduled_at) {
+          setScheduleEnabled(true);
+          setScheduleDate(new Date(data.scheduled_at));
+          setScheduleTime(format(new Date(data.scheduled_at), "HH:mm"));
+        }
+        setLoadedPostId(data.id);
+        setDraftRestored(true);
+        toast({ title: "Brouillon chargé", description: "Tu peux le modifier puis le republier ou le reprogrammer." });
+      }
+      return data;
+    },
+  });
+
   useEffect(() => {
-    if (!user || draftRestored) return;
+    if (!user || draftRestored || editPostId) return;
     const draft = loadComposerDraft(user.id);
     if (draftHasWork(draft) && draft) {
       setTextMode(draft.textMode);
