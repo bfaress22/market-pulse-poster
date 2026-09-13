@@ -25,7 +25,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { loadPrefs } from "@/lib/imagePrefs";
 import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";

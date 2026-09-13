@@ -105,6 +105,7 @@ const Dashboard = () => {
 
   const upcoming = posts?.filter((p) => ["scheduled", "queued", "processing", "retrying"].includes(p.status)).slice(0, 5) || [];
   const recent = posts?.slice(0, 6) || [];
+  const drafts = posts?.filter((p) => ["draft", "ready"].includes(p.status)).slice(0, 6) || [];
 
   if (isLoading) {
     return (
