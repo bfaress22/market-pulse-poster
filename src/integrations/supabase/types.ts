@@ -121,11 +121,15 @@ export type Database = {
       }
       posts: {
         Row: {
+          attempt_count: number
           content: string
           content_hash: string | null
           created_at: string
+          error_code: string | null
+          error_message: string | null
           id: string
           image_url: string | null
+          last_attempt_at: string | null
           linkedin_post_id: string | null
           news_summary: string | null
           published_at: string | null
@@ -137,11 +141,15 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          attempt_count?: number
           content: string
           content_hash?: string | null
           created_at?: string
+          error_code?: string | null
+          error_message?: string | null
           id?: string
           image_url?: string | null
+          last_attempt_at?: string | null
           linkedin_post_id?: string | null
           news_summary?: string | null
           published_at?: string | null
@@ -153,11 +161,15 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          attempt_count?: number
           content?: string
           content_hash?: string | null
           created_at?: string
+          error_code?: string | null
+          error_message?: string | null
           id?: string
           image_url?: string | null
+          last_attempt_at?: string | null
           linkedin_post_id?: string | null
           news_summary?: string | null
           published_at?: string | null
@@ -211,6 +223,142 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      publication_attempts: {
+        Row: {
+          attempt_number: number
+          completed_at: string | null
+          error_message: string | null
+          id: string
+          provider_response: Json | null
+          provider_status: number | null
+          publication_job_id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          attempt_number: number
+          completed_at?: string | null
+          error_message?: string | null
+          id?: string
+          provider_response?: Json | null
+          provider_status?: number | null
+          publication_job_id: string
+          started_at?: string
+          status: string
+        }
+        Update: {
+          attempt_number?: number
+          completed_at?: string | null
+          error_message?: string | null
+          id?: string
+          provider_response?: Json | null
+          provider_status?: number | null
+          publication_job_id?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "publication_attempts_publication_job_id_fkey"
+            columns: ["publication_job_id"]
+            isOneToOne: false
+            referencedRelation: "publication_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      publication_jobs: {
+        Row: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          idempotency_key: string
+          last_attempt_at: string | null
+          linkedin_post_urn: string | null
+          post_id: string | null
+          schedule_id: string | null
+          scheduled_for: string | null
+          started_at: string | null
+          status: string
+          target_id: string | null
+          topic_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          idempotency_key: string
+          last_attempt_at?: string | null
+          linkedin_post_urn?: string | null
+          post_id?: string | null
+          schedule_id?: string | null
+          scheduled_for?: string | null
+          started_at?: string | null
+          status?: string
+          target_id?: string | null
+          topic_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          idempotency_key?: string
+          last_attempt_at?: string | null
+          linkedin_post_urn?: string | null
+          post_id?: string | null
+          schedule_id?: string | null
+          scheduled_for?: string | null
+          started_at?: string | null
+          status?: string
+          target_id?: string | null
+          topic_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "publication_jobs_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "publication_jobs_schedule_id_fkey"
+            columns: ["schedule_id"]
+            isOneToOne: false
+            referencedRelation: "schedules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "publication_jobs_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "linkedin_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "publication_jobs_topic_id_fkey"
+            columns: ["topic_id"]
+            isOneToOne: false
+            referencedRelation: "topic_queue"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       schedule_runs: {
         Row: {
