@@ -25,7 +25,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { loadPrefs } from "@/lib/imagePrefs";
 import { LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
@@ -48,6 +48,8 @@ const Composer = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [searchParams] = useSearchParams();
+  const editPostId = searchParams.get("post");
 
   // Text
   const [textMode, setTextMode] = useState<Mode>("ai");
@@ -131,8 +133,40 @@ const Composer = () => {
     return wallTimeToUtc(`${y}-${mo}-${d}`, h || 0, m || 0, scheduleTz).toISOString();
   }, [scheduleEnabled, scheduleDate, scheduleTime, scheduleTz]);
 
+  // Load an existing post when opened with ?post=<id> (editing a draft)
+  const [loadedPostId, setLoadedPostId] = useState<string | null>(null);
+  useQuery({
+    queryKey: ["composer-edit-post", editPostId],
+    enabled: !!user && !!editPostId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("posts")
+        .select("*")
+        .eq("id", editPostId!)
+        .single();
+      if (error) throw error;
+      if (loadedPostId !== data.id) {
+        setTitle(data.title || "");
+        setContent(data.content || "");
+        setImageUrl(data.image_url);
+        setIncludeImage(!!data.image_url);
+        setTextMode("manual");
+        if (data.target_id) setTargetIds([data.target_id]);
+        if (data.scheduled_at) {
+          setScheduleEnabled(true);
+          setScheduleDate(new Date(data.scheduled_at));
+          setScheduleTime(format(new Date(data.scheduled_at), "HH:mm"));
+        }
+        setLoadedPostId(data.id);
+        setDraftRestored(true);
+        toast({ title: "Brouillon chargé", description: "Tu peux le modifier puis le republier ou le reprogrammer." });
+      }
+      return data;
+    },
+  });
+
   useEffect(() => {
-    if (!user || draftRestored) return;
+    if (!user || draftRestored || editPostId) return;
     const draft = loadComposerDraft(user.id);
     if (draftHasWork(draft) && draft) {
       setTextMode(draft.textMode);
@@ -154,7 +188,7 @@ const Composer = () => {
       toast({ title: "Brouillon récupéré après actualisation." });
     }
     setDraftRestored(true);
-  }, [user, draftRestored, toast]);
+  }, [user, draftRestored, editPostId, toast]);
 
   useEffect(() => {
     if (!user || !draftRestored) return;
@@ -392,18 +426,38 @@ const Composer = () => {
     setBusy(action);
     try {
       const status: PostStatus = action === "publish" ? "ready" : action === "schedule" ? "scheduled" : "draft";
-      const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
-      const rows = destinations.map((targetId) => ({
-        user_id: user.id,
-        title: title || content.slice(0, 60),
-        content,
-        image_url: includeImage ? imageUrl : null,
-        status,
-        scheduled_at: action === "schedule" ? scheduledISO : null,
-        target_id: targetId,
-      }));
-      const { data: saved, error } = await supabase.from("posts").insert(rows).select();
-      if (error) throw error;
+      let saved: any[];
+      if (editPostId) {
+        // Editing an existing post: update the single row
+        const { data: updated, error } = await supabase
+          .from("posts")
+          .update({
+            title: title || content.slice(0, 60),
+            content,
+            image_url: includeImage ? imageUrl : null,
+            status,
+            scheduled_at: action === "schedule" ? scheduledISO : null,
+            target_id: targetIds[0] ?? null,
+          })
+          .eq("id", editPostId)
+          .select();
+        if (error) throw error;
+        saved = updated ?? [];
+      } else {
+        const destinations = action === "draft" ? (targetIds.length ? targetIds : [null]) : targetIds;
+        const rows = destinations.map((targetId) => ({
+          user_id: user.id,
+          title: title || content.slice(0, 60),
+          content,
+          image_url: includeImage ? imageUrl : null,
+          status,
+          scheduled_at: action === "schedule" ? scheduledISO : null,
+          target_id: targetId,
+        }));
+        const { data: inserted, error } = await supabase.from("posts").insert(rows).select();
+        if (error) throw error;
+        saved = inserted ?? [];
+      }
 
       if (action === "publish") {
         const results = await Promise.allSettled(
@@ -450,6 +504,7 @@ const Composer = () => {
       clearComposerDraft(user.id);
       setContent(""); setTitle(""); setImageUrl(null); setTextPrompt(""); setImagePrompt("");
       setScheduleEnabled(false); setScheduleDate(undefined);
+      if (editPostId) navigate("/composer", { replace: true });
     } catch (e: any) {
       toast({ title: "Erreur", description: e.message, variant: "destructive" });
     } finally {
