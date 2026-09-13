@@ -188,7 +188,7 @@ const Composer = () => {
       toast({ title: "Brouillon récupéré après actualisation." });
     }
     setDraftRestored(true);
-  }, [user, draftRestored, toast]);
+  }, [user, draftRestored, editPostId, toast]);
 
   useEffect(() => {
     if (!user || !draftRestored) return;
@@ -504,6 +504,7 @@ const Composer = () => {
       clearComposerDraft(user.id);
       setContent(""); setTitle(""); setImageUrl(null); setTextPrompt(""); setImagePrompt("");
       setScheduleEnabled(false); setScheduleDate(undefined);
+      if (editPostId) navigate("/composer", { replace: true });
     } catch (e: any) {
       toast({ title: "Erreur", description: e.message, variant: "destructive" });
     } finally {
