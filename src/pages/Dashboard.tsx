@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Loader2, Send, Eye, Sparkles, BarChart3, Clock, CheckCircle2,
-  AlertTriangle, Calendar, Plus, FileText
+  AlertTriangle, Calendar, Plus, FileText, Pencil
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 

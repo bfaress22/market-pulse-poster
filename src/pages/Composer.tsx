@@ -48,6 +48,8 @@ const Composer = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [searchParams] = useSearchParams();
+  const editPostId = searchParams.get("post");
 
   // Text
   const [textMode, setTextMode] = useState<Mode>("ai");
