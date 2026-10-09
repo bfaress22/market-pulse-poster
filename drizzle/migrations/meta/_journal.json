@@ -29,6 +29,13 @@
       "when": 1789326602609,
       "tag": "0003_restrict_linkedin_token_updates_and_attempt_log_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791565196528,
+      "tag": "0004_migration",
+      "breakpoints": true
     }
   ]
 }
