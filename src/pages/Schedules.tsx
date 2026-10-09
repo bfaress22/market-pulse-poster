@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2, Linkedin } from "lucide-react";
+import { Play, Trash2, Clock, Loader2, CalendarClock, History, Wand2, Linkedin, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLinkedInTargets } from "@/hooks/useLinkedInTargets";
+import EditScheduleDialog from "@/components/EditScheduleDialog";
 
 const DAYS = [
   { v: 1, label: "Lun" }, { v: 2, label: "Mar" }, { v: 3, label: "Mer" },
@@ -36,6 +38,7 @@ export default function Schedules() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { targets } = useLinkedInTargets();
+  const [editing, setEditing] = useState<Schedule | null>(null);
 
 
   const { data: schedules, isLoading } = useQuery({
@@ -99,6 +102,7 @@ export default function Schedules() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
+      <EditScheduleDialog schedule={editing} onClose={() => setEditing(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Schedules</h1>
@@ -157,6 +161,9 @@ export default function Schedules() {
                   <Switch checked={s.enabled} onCheckedChange={(v) => toggleEnabled.mutate({ id: s.id, enabled: v })} />
                   <Button size="icon" variant="ghost" disabled={runNow.isPending} onClick={() => runNow.mutate(s.id)} title="Run now">
                     {runNow.isPending && runNow.variables === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={() => setEditing(s)} title="Modifier">
+                    <Pencil className="h-4 w-4" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => { if (confirm("Supprimer cette automatisation ?")) remove.mutate(s.id); }}>
                     <Trash2 className="h-4 w-4" />
