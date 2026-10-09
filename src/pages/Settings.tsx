@@ -170,7 +170,7 @@ const Settings = () => {
   }, [qc, toast]);
 
 
-  const { isLoading } = useQuery({
+  const { isLoading, error: settingsError, refetch: refetchSettings } = useQuery({
     queryKey: ["user_settings", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -351,6 +351,18 @@ const Settings = () => {
       toast({ title: "Impossible de copier", variant: "destructive" });
     }
   };
+
+  if (settingsError && !s) {
+    return (
+      <div className="p-8 flex flex-col items-center gap-3 text-center">
+        <XCircle className="h-8 w-8 text-destructive" />
+        <p className="text-sm text-muted-foreground max-w-md">
+          Impossible de charger les paramètres : {(settingsError as Error).message}
+        </p>
+        <Button variant="outline" onClick={() => refetchSettings()}>Réessayer</Button>
+      </div>
+    );
+  }
 
   if (isLoading || !s) {
     return <div className="p-8 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
