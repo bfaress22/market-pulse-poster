@@ -549,6 +549,17 @@ export type Database = {
           firecrawl_api_key: string | null
           gemini_api_key: string | null
           groq_api_key: string | null
+          has_anthropic_api_key: boolean | null
+          has_deepseek_api_key: boolean | null
+          has_firecrawl_api_key: boolean | null
+          has_gemini_api_key: boolean | null
+          has_groq_api_key: boolean | null
+          has_linkedin_client_secret: boolean | null
+          has_mistral_api_key: boolean | null
+          has_openai_api_key: boolean | null
+          has_openrouter_api_key: boolean | null
+          has_perplexity_api_key: boolean | null
+          has_xai_api_key: boolean | null
           image_model: string
           linkedin_access_token: string | null
           linkedin_client_id: string | null
@@ -574,6 +585,17 @@ export type Database = {
           firecrawl_api_key?: string | null
           gemini_api_key?: string | null
           groq_api_key?: string | null
+          has_anthropic_api_key?: boolean | null
+          has_deepseek_api_key?: boolean | null
+          has_firecrawl_api_key?: boolean | null
+          has_gemini_api_key?: boolean | null
+          has_groq_api_key?: boolean | null
+          has_linkedin_client_secret?: boolean | null
+          has_mistral_api_key?: boolean | null
+          has_openai_api_key?: boolean | null
+          has_openrouter_api_key?: boolean | null
+          has_perplexity_api_key?: boolean | null
+          has_xai_api_key?: boolean | null
           image_model?: string
           linkedin_access_token?: string | null
           linkedin_client_id?: string | null
@@ -599,6 +621,17 @@ export type Database = {
           firecrawl_api_key?: string | null
           gemini_api_key?: string | null
           groq_api_key?: string | null
+          has_anthropic_api_key?: boolean | null
+          has_deepseek_api_key?: boolean | null
+          has_firecrawl_api_key?: boolean | null
+          has_gemini_api_key?: boolean | null
+          has_groq_api_key?: boolean | null
+          has_linkedin_client_secret?: boolean | null
+          has_mistral_api_key?: boolean | null
+          has_openai_api_key?: boolean | null
+          has_openrouter_api_key?: boolean | null
+          has_perplexity_api_key?: boolean | null
+          has_xai_api_key?: boolean | null
           image_model?: string
           linkedin_access_token?: string | null
           linkedin_client_id?: string | null
