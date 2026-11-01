@@ -411,6 +411,8 @@ export type Database = {
         Row: {
           adhoc_sources: Json
           ai_model: string | null
+          claimed_at: string | null
+          claimed_by: string | null
           created_at: string
           days_of_week: number[]
           enabled: boolean
@@ -436,6 +438,8 @@ export type Database = {
         Insert: {
           adhoc_sources?: Json
           ai_model?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string
           days_of_week?: number[]
           enabled?: boolean
@@ -461,6 +465,8 @@ export type Database = {
         Update: {
           adhoc_sources?: Json
           ai_model?: string | null
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string
           days_of_week?: number[]
           enabled?: boolean
@@ -657,7 +663,145 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_due_scheduled_posts: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempt_count: number
+          content: string
+          content_hash: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          image_url: string | null
+          last_attempt_at: string | null
+          linkedin_post_id: string | null
+          news_summary: string | null
+          published_at: string | null
+          schedule_id: string | null
+          scheduled_at: string | null
+          status: string
+          target_id: string | null
+          title: string
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "posts"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_due_schedules: {
+        Args: { p_limit?: number }
+        Returns: {
+          adhoc_sources: Json
+          ai_model: string | null
+          claimed_at: string | null
+          claimed_by: string | null
+          created_at: string
+          days_of_week: number[]
+          enabled: boolean
+          hour: number
+          id: string
+          image_mode: string
+          image_prompt: string | null
+          language: string
+          last_run_at: string | null
+          minute: number
+          name: string
+          next_run_at: string | null
+          prompt: string
+          recent_hashes: string[]
+          saved_source_ids: string[]
+          target_ids: string[]
+          timezone: string
+          tone_instructions: string | null
+          updated_at: string
+          used_urls: string[]
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "schedules"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_due_topics: {
+        Args: { p_limit?: number }
+        Returns: {
+          created_at: string
+          error: string | null
+          id: string
+          include_image: boolean
+          language: string
+          post_id: string | null
+          processed_at: string | null
+          scheduled_at: string
+          status: string
+          subject: string
+          target_ids: string[]
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "topic_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      finalize_publication_job: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_job_id: string
+          p_ok: boolean
+          p_provider_response: Json
+          p_provider_status: number
+          p_retryable: boolean
+          p_urn: string
+        }
+        Returns: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          idempotency_key: string
+          last_attempt_at: string | null
+          linkedin_post_urn: string | null
+          post_id: string | null
+          schedule_id: string | null
+          scheduled_for: string | null
+          started_at: string | null
+          status: string
+          target_id: string | null
+          topic_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "publication_jobs"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      upsert_and_claim_publication_job: {
+        Args: {
+          p_idempotency_key: string
+          p_post_id: string
+          p_schedule_id: string
+          p_scheduled_for: string
+          p_target_id: string
+          p_topic_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
