@@ -96,7 +96,7 @@ const Settings = () => {
     enabled: !!user && !!s?.has_xai_api_key,
     retry: false,
     staleTime: 5 * 60 * 1000,
-    queryFn: async (): Promise<AiModel[]> => {
+    queryFn: async (): Promise<{ text: AiModel[]; image: AiModel[]; textError?: string; imageError?: string }> => {
       const { data, error } = await supabase.functions.invoke("list-grok-models");
       if (error) {
         let message = "Impossible de charger les modèles Grok.";
@@ -106,10 +106,15 @@ const Settings = () => {
         } catch { /* Keep the safe fallback. */ }
         throw new Error(message);
       }
-      return (data.models as { value: string; label: string }[]).map((model) => ({ ...model, provider: "xai" }));
+      const normalize = (models: { value: string; label: string }[] = []): AiModel[] => models.map((model) => ({ ...model, provider: "xai" }));
+      return { text: normalize(data.models), image: normalize(data.imageModels), textError: data.textError, imageError: data.imageError };
     },
   });
-  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data ?? POST_MODELS.filter((m) => m.provider === "xai"))];
+  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text ?? POST_MODELS.filter((m) => m.provider === "xai"))];
+  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image ?? IMAGE_MODELS.filter((m) => m.provider === "xai"))];
+  if (s?.image_model && !imageModels.some((m) => m.value === s.image_model)) {
+    imageModels.push({ value: s.image_model, label: s.image_model, provider: s.image_model.startsWith("xai/") ? "xai" : "lovable" });
+  }
   if (s?.post_model && !postModels.some((m) => m.value === s.post_model)) {
     postModels.push({ value: s.post_model, label: s.post_model, provider: s.post_model.startsWith("xai/") ? "xai" : "lovable" });
   }
@@ -657,17 +662,20 @@ const Settings = () => {
                   Actualiser les modèles Grok
                 </Button>
                 {grokModels.error && <p role="alert" className="text-xs text-destructive">{grokModels.error.message}</p>}
+                {grokModels.data?.textError && <p role="alert" className="text-xs text-destructive">{grokModels.data.textError}</p>}
               </div>
             )}
           </div>
           <div className="space-y-1">
             <Label>Modèle de génération d'image</Label>
-            <Select value={s.image_model} onValueChange={(v) => setS({ ...s, image_model: v })}>
+            <Select value={s.image_model} onValueChange={(v) => setS({ ...s, image_model: v, use_byok: v.startsWith("xai/") ? true : s.use_byok })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {IMAGE_MODELS.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
+                {imageModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
               </SelectContent>
             </Select>
+            {s.image_model.startsWith("xai/") && !s.has_xai_api_key && <p className="text-xs text-destructive">Clé API xAI requise pour les images Grok.</p>}
+            {grokModels.data?.imageError && <p role="alert" className="text-xs text-destructive">{grokModels.data.imageError}</p>}
           </div>
           <div className="space-y-1">
             <Label>Ton & instructions (optionnel)</Label>
@@ -723,7 +731,7 @@ const Settings = () => {
               </div>
 
               <div className="rounded-md bg-muted/50 p-3 text-[11px] text-muted-foreground">
-                💡 Grok nécessite ta clé xAI et utilise tes crédits xAI. Les modèles d’image restent sur Lovable AI.
+                💡 Les modèles Grok texte et image nécessitent ta clé xAI et utilisent tes crédits xAI. Les autres images utilisent Lovable AI.
               </div>
             </div>
           )}
