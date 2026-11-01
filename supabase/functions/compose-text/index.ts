@@ -2,61 +2,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { gatherSourceContext, type SourceInput } from "../_shared/web-sources.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 const json = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-type SourceInput = { type: "url" | "keyword" | "idea"; value: string };
-
-async function gatherSourceContext(sources: SourceInput[]): Promise<string> {
-  const fc = Deno.env.get("FIRECRAWL_API_KEY");
-  const chunks: string[] = [];
-
-  const ideas = sources.filter((s) => s.type === "idea").map((s) => s.value).filter(Boolean);
-  if (ideas.length) chunks.push(`# Ideas / notes from the user\n\n${ideas.map((i) => `- ${i}`).join("\n")}`);
-
-  const urls = sources.filter((s) => s.type === "url").map((s) => s.value).filter(Boolean).slice(0, 4);
-  const keywords = sources.filter((s) => s.type === "keyword").map((s) => s.value).filter(Boolean).slice(0, 4);
-
-  if (!fc) {
-    if (urls.length || keywords.length) {
-      chunks.push(`# References (raw)\n\n${[...urls, ...keywords.map((k) => `keyword: ${k}`)].map((x) => `- ${x}`).join("\n")}`);
-    }
-    return chunks.join("\n\n---\n\n");
-  }
-
-  await Promise.all(urls.map(async (url) => {
-    try {
-      const r = await fetch("https://api.firecrawl.dev/v2/scrape", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${fc}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true, waitFor: 1500 }),
-      });
-      const d = await r.json();
-      const md = d.data?.markdown || d.markdown;
-      if (md) chunks.push(`# Source: ${url}\n\n${String(md).substring(0, 2500)}`);
-    } catch (e) { console.warn("scrape failed", url, e); }
-  }));
-
-  await Promise.all(keywords.map(async (kw) => {
-    try {
-      const r = await fetch("https://api.firecrawl.dev/v2/search", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${fc}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ query: kw, limit: 3, tbs: "qdr:w" }),
-      });
-      const d = await r.json();
-      const results = d.data || d.web?.results || [];
-      const summary = results.map((x: any) => `- ${x.title || ""}: ${x.description || ""} (${x.url || ""})`).join("\n");
-      if (summary) chunks.push(`# Search: ${kw}\n\n${summary}`);
-    } catch (e) { console.warn("search failed", kw, e); }
-  }));
-
-  return chunks.join("\n\n---\n\n");
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -70,7 +22,7 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions")
       .eq("user_id", userId).maybeSingle();
 
     // Resolve saved sources by id
@@ -82,13 +34,35 @@ serve(async (req) => {
         .eq("user_id", userId)
         .in("id", savedSourceIds);
       for (const r of saved || []) {
-        if (r.source_type === "url" || r.source_type === "keyword") {
-          resolvedSources.push({ type: r.source_type as any, value: r.value });
+        if (r.source_type === "url" || r.source_type === "keyword" || r.source_type === "idea") {
+          resolvedSources.push({ type: r.source_type as SourceInput["type"], value: r.value });
         }
       }
     }
 
-    const sourceContext = resolvedSources.length ? await gatherSourceContext(resolvedSources) : "";
+    // If nothing selected, use all enabled saved sources so market briefs still get live context
+    if (!resolvedSources.length) {
+      const { data: enabled } = await supabase
+        .from("content_sources")
+        .select("source_type, value")
+        .eq("user_id", userId)
+        .eq("enabled", true)
+        .limit(8);
+      for (const r of enabled || []) {
+        if (r.source_type === "url" || r.source_type === "keyword" || r.source_type === "idea") {
+          resolvedSources.push({ type: r.source_type as SourceInput["type"], value: r.value });
+        }
+      }
+    }
+
+    // From a free-form prompt alone: derive a keyword search so BYOK models still get web context
+    if (!resolvedSources.length && typeof prompt === "string" && prompt.trim().length > 12) {
+      resolvedSources = [{ type: "keyword", value: prompt.trim().slice(0, 180) }];
+    }
+
+    const { context: sourceContext, provider: sourceProvider } = resolvedSources.length
+      ? await gatherSourceContext(resolvedSources, { firecrawlKey: s?.firecrawl_api_key })
+      : { context: "", provider: "open" as const };
 
     const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s);
 
@@ -102,6 +76,9 @@ serve(async (req) => {
 LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}. Never use another language, whatever the language of the sources or instructions.
 Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
 ${s?.tone_instructions ? `User tone:\n${s.tone_instructions}` : ""}
+${sourceContext
+  ? `You HAVE live web research below. Ground prices, news and claims ONLY in that research. Cite sources briefly when the tone requires it. Do not invent figures missing from the research.`
+  : `No live web research was attached. Do not invent live prices or settlement figures. Write a high-level post or ask for sources.`}
 Return JSON via the write_post tool.`;
 
     const sourceBlock = sourceContext
@@ -160,7 +137,13 @@ Return JSON via the write_post tool.`;
     const tc = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!tc) return json(500, { success: false, error: "AI returned no structured data" });
     const out = JSON.parse(tc.function.arguments);
-    return json(200, { success: true, ...out, usedSources: resolvedSources.length });
+    return json(200, {
+      success: true,
+      ...out,
+      usedSources: resolvedSources.length,
+      sourceProvider,
+      hadWebContext: !!sourceContext,
+    });
   } catch (e) {
     console.error("compose-text error", e);
     return json(500, { success: false, error: e instanceof Error ? e.message : "Failed" });

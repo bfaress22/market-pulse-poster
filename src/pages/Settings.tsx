@@ -741,11 +741,11 @@ const Settings = () => {
               <div className="pt-3 border-t">
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Sources de contenu (scraping & recherche)</p>
                 <div className="space-y-1">
-                  <Label>Clé API Firecrawl</Label>
-                  <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-..."} />
+                  <Label>Clé API Firecrawl (optionnelle)</Label>
+                  <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-... (optionnel)"} />
                   <p className="text-[11px] text-muted-foreground">
-                    Utilisée pour scraper les URLs et faire les recherches web (mots-clés) dans tes Sources.{" "}
-                    <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Récupérer la clé →</a>
+                    Optionnelle. Sans clé, l’app utilise des sources ouvertes (Jina Reader + Google News RSS / DuckDuckGo) pour scraper et rechercher.{" "}
+                    <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Firecrawl →</a>
                   </p>
                 </div>
               </div>

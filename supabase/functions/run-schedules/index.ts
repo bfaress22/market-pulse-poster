@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateXaiImage } from "../_shared/xai-image.ts";
 import { generateImageRouted, mapImageError } from "../_shared/ai-image.ts";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { gatherSourceContext, type SourceInput } from "../_shared/web-sources.ts";
 import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
 import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueSchedules, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
@@ -17,7 +18,7 @@ const corsHeaders = {
 };
 const json = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-type Source = { type: "url" | "keyword" | "idea"; value: string };
+type Source = SourceInput;
 
 // Time helpers live in _shared/schedule-time.ts
 
@@ -27,54 +28,18 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// ===== Source gathering with used-URL filter =====
-async function gatherSources(sources: Source[], usedUrls: Set<string>): Promise<{ context: string; freshUrls: string[] }> {
-  const fc = Deno.env.get("FIRECRAWL_API_KEY");
-  const chunks: string[] = [];
-  const freshUrls: string[] = [];
-
-  const ideas = sources.filter((s) => s.type === "idea").map((s) => s.value).filter(Boolean);
-  if (ideas.length) chunks.push(`# Ideas / notes\n${ideas.map((i) => `- ${i}`).join("\n")}`);
-
-  const urls = sources.filter((s) => s.type === "url").map((s) => s.value).filter(Boolean).slice(0, 4);
-  const keywords = sources.filter((s) => s.type === "keyword").map((s) => s.value).filter(Boolean).slice(0, 4);
-
-  if (!fc) {
-    if (urls.length || keywords.length) chunks.push(`# References (raw)\n${[...urls, ...keywords.map((k) => `keyword:${k}`)].map((x) => `- ${x}`).join("\n")}`);
-    return { context: chunks.join("\n\n---\n\n"), freshUrls };
-  }
-
-  await Promise.all(urls.map(async (url) => {
-    try {
-      const r = await fetch("https://api.firecrawl.dev/v2/scrape", {
-        method: "POST", headers: { Authorization: `Bearer ${fc}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true, waitFor: 1500 }),
-      });
-      const d = await r.json();
-      const md = d.data?.markdown || d.markdown;
-      if (md) { chunks.push(`# Source: ${url}\n${String(md).substring(0, 2500)}`); freshUrls.push(url); }
-    } catch (e) { console.warn("scrape fail", url, e); }
-  }));
-
-  // For keywords, search and filter out URLs we've already used to keep it fresh
-  await Promise.all(keywords.map(async (kw) => {
-    try {
-      const r = await fetch("https://api.firecrawl.dev/v2/search", {
-        method: "POST", headers: { Authorization: `Bearer ${fc}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ query: kw, limit: 5, tbs: "qdr:w" }),
-      });
-      const d = await r.json();
-      const results: any[] = d.data || d.web?.results || [];
-      const fresh = results.filter((x: any) => x.url && !usedUrls.has(x.url)).slice(0, 3);
-      if (fresh.length) {
-        const summary = fresh.map((x) => `- ${x.title || ""}: ${x.description || ""} (${x.url})`).join("\n");
-        chunks.push(`# Search: ${kw}\n${summary}`);
-        for (const x of fresh) freshUrls.push(x.url);
-      }
-    } catch (e) { console.warn("search fail", kw, e); }
-  }));
-
-  return { context: chunks.join("\n\n---\n\n"), freshUrls };
+async function gatherSources(
+  sources: Source[],
+  usedUrls: Set<string>,
+  firecrawlKey?: string | null,
+): Promise<{ context: string; freshUrls: string[] }> {
+  const { context, freshUrls } = await gatherSourceContext(sources, {
+    firecrawlKey,
+    usedUrls,
+    maxUrls: 4,
+    maxKeywords: 4,
+  });
+  return { context, freshUrls };
 }
 
 // ===== AI text generation =====
@@ -192,12 +157,12 @@ async function processSchedule(supabase: any, sched: any) {
   const usedUrlSet = new Set<string>(sched.used_urls || []);
   const recentHashes = new Set<string>(sched.recent_hashes || []);
 
-  const { context: sourceCtx, freshUrls } = await gatherSources(sources, usedUrlSet);
-
-  // AI key/model
+  // AI + scrape keys
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, image_model")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions, image_model")
     .eq("user_id", userId).maybeSingle();
+
+  const { context: sourceCtx, freshUrls } = await gatherSources(sources, usedUrlSet, us?.firecrawl_api_key);
   const { model, url, key } = resolveTextProvider(sched.ai_model || us?.post_model || "google/gemini-3-flash-preview", us);
 
   // Try up to 2 generations to avoid duplicate
