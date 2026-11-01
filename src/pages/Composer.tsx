@@ -56,6 +56,9 @@ const Composer = () => {
   const [textPrompt, setTextPrompt] = useState("");
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
+  const [xPost, setXPost] = useState("");
+  const [verifyList, setVerifyList] = useState<string[]>([]);
+  const [genMeta, setGenMeta] = useState<{ hadWebContext?: boolean; queryCount?: number; researchUrlCount?: number; languageUsed?: string } | null>(null);
   const [language, setLanguage] = useState<string>(DEFAULT_LANGUAGE);
 
   // LinkedIn destinations (defaults to the user's default target once loaded)
@@ -231,7 +234,20 @@ const Composer = () => {
     onSuccess: (d) => {
       setContent(d.content);
       if (!title) setTitle(d.title);
-      toast({ title: "Texte généré ✨" });
+      setXPost(typeof d.x_post === "string" ? d.x_post : "");
+      setVerifyList(Array.isArray(d.verify_before_publish) ? d.verify_before_publish : []);
+      setGenMeta({
+        hadWebContext: !!d.hadWebContext,
+        queryCount: d.queryCount,
+        researchUrlCount: d.researchUrlCount,
+        languageUsed: d.languageUsed,
+      });
+      toast({
+        title: d.hadWebContext ? "Texte généré (recherche web OK)" : "Texte généré (peu de sources web)",
+        description: d.hadWebContext
+          ? `${d.queryCount || 0} requêtes · ${d.researchUrlCount || 0} URLs`
+          : "Ajoute des sources ou réessaie — les chiffres peuvent manquer",
+      });
     },
     onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
     onSettled: () => setBusy(null),
@@ -317,6 +333,14 @@ const Composer = () => {
         if (!error && data?.success) {
           setContent(data.content);
           if (!title) setTitle(data.title);
+          setXPost(typeof data.x_post === "string" ? data.x_post : "");
+          setVerifyList(Array.isArray(data.verify_before_publish) ? data.verify_before_publish : []);
+          setGenMeta({
+            hadWebContext: !!data.hadWebContext,
+            queryCount: data.queryCount,
+            researchUrlCount: data.researchUrlCount,
+            languageUsed: data.languageUsed,
+          });
           textOk = true;
         } else if (!firstError) {
           firstError = await fnErrorMessage(error, data);
@@ -762,7 +786,45 @@ const Composer = () => {
                   rows={12}
                   className="bg-background/40 font-mono text-sm"
                 />
+                {genMeta && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Recherche web : {genMeta.hadWebContext ? "oui" : "faible/absente"}
+                    {typeof genMeta.queryCount === "number" ? ` · ${genMeta.queryCount} requêtes` : ""}
+                    {typeof genMeta.researchUrlCount === "number" ? ` · ${genMeta.researchUrlCount} URLs` : ""}
+                    {genMeta.languageUsed ? ` · langue ${genMeta.languageUsed}` : ""}
+                  </p>
+                )}
               </div>
+              {(xPost || verifyList.length > 0) && (
+                <div className="space-y-3 rounded-lg border border-border/50 bg-muted/20 p-3">
+                  {xPost && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Version X (≤280)</Label>
+                        <span className={cn("text-xs", xPost.length > 280 ? "text-destructive" : "text-muted-foreground")}>
+                          {xPost.length}/280
+                        </span>
+                      </div>
+                      <Textarea
+                        value={xPost}
+                        onChange={(e) => setXPost(e.target.value)}
+                        rows={3}
+                        className="bg-background/40 font-mono text-sm"
+                      />
+                    </div>
+                  )}
+                  {verifyList.length > 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs uppercase tracking-wider text-muted-foreground">À vérifier avant publish</Label>
+                      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                        {verifyList.map((item, i) => (
+                          <li key={`${i}-${item.slice(0, 24)}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">Titre interne (optionnel)</Label>
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Pour t'y retrouver dans l'historique" className="bg-background/40" />
