@@ -1,6 +1,7 @@
 // Cron-triggered: runs due schedules — scrapes sources, generates post + optional image, publishes to LinkedIn
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
 import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueSchedules, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
@@ -117,7 +118,7 @@ Return JSON via the write_post tool.`;
       tool_choice: { type: "function", function: { name: "write_post" } },
     }),
   });
-  if (!res.ok) throw new Error(`AI text [${res.status}]: ${await res.text()}`);
+  if (!res.ok) throw new Error(opts.url.startsWith("https://api.x.ai/") ? xaiErrorMessage(res.status) : `AI text [${res.status}]: ${await res.text()}`);
   const data = await res.json();
   const tc = data.choices?.[0]?.message?.tool_calls?.[0];
   if (!tc) throw new Error("AI returned no structured data");
@@ -181,15 +182,9 @@ async function processSchedule(supabase: any, sched: any) {
 
   // AI key/model
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, tone_instructions, image_model")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, tone_instructions, image_model")
     .eq("user_id", userId).maybeSingle();
-  let model = sched.ai_model || us?.post_model || "google/gemini-3-flash-preview";
-  let url = "https://ai.gateway.lovable.dev/v1/chat/completions";
-  let key = Deno.env.get("LOVABLE_API_KEY");
-  if (us?.use_byok && model.startsWith("openai/") && us.openai_api_key) {
-    url = "https://api.openai.com/v1/chat/completions"; key = us.openai_api_key; model = model.replace("openai/", "");
-  }
-  if (!key) throw new Error("No AI key");
+  const { model, url, key } = resolveTextProvider(sched.ai_model || us?.post_model || "google/gemini-3-flash-preview", us, Deno.env.get("LOVABLE_API_KEY"));
 
   // Try up to 2 generations to avoid duplicate
   let attempt = 0; let generated: { title: string; content: string } | null = null; let hash = "";
