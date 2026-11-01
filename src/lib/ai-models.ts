@@ -22,6 +22,7 @@ export const POST_MODELS: AiModel[] = [
 ];
 
 export const IMAGE_MODELS: AiModel[] = [
+  { value: "xai/grok-imagine-image-2.0", label: "Grok Imagine Image 2.0 (API xAI)", provider: "xai" },
   { value: "google/gemini-3.1-flash-image-preview", label: "Nano Banana 2 (default, fast pro quality)", provider: "lovable" },
   { value: "google/gemini-2.5-flash-image", label: "Nano Banana (fast & cheap)", provider: "lovable" },
   { value: "google/gemini-3-pro-image-preview", label: "Gemini 3 Pro Image (max quality)", provider: "lovable" },

@@ -17,13 +17,13 @@ export function resolveTextProvider(model: string, settings: TextSettings | null
   return { model, url: "https://ai.gateway.lovable.dev/v1/chat/completions", key: lovableKey };
 }
 
-export function normalizeGrokModels(models: unknown): { value: string; label: string }[] {
+export function normalizeGrokModels(models: unknown, modality: "text" | "image" = "text"): { value: string; label: string }[] {
   if (!Array.isArray(models)) return [];
   const ids = new Set<string>();
   for (const model of models) {
     if (!model || typeof model !== "object") continue;
     const { id, aliases, output_modalities } = model;
-    if (Array.isArray(output_modalities) && !output_modalities.includes("text")) continue;
+    if (Array.isArray(output_modalities) && !output_modalities.includes(modality)) continue;
     for (const name of [id, ...(Array.isArray(aliases) ? aliases : [])]) {
       if (typeof name === "string" && /^[a-zA-Z0-9._-]+$/.test(name)) ids.add(name);
     }

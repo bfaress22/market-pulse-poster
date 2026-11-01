@@ -29,4 +29,15 @@ describe("Grok post generation", () => {
     expect(xaiErrorMessage(402)).toContain("xAI");
     expect(xaiErrorMessage(402)).not.toContain("Lovable");
   });
+  it("includes mini models whenever returned by the user's xAI catalog", () => {
+    expect(normalizeGrokModels([{ id: "grok-3-mini", aliases: ["grok-3-mini-latest"], output_modalities: ["text"] }]).map((m) => m.value))
+      .toEqual(["xai/grok-3-mini", "xai/grok-3-mini-latest"]);
+  });
+  it("lists all image models and aliases separately from text and video", () => {
+    expect(normalizeGrokModels([
+      { id: "grok-imagine-image-2.0", aliases: ["grok-imagine-image"], output_modalities: ["image"] },
+      { id: "grok-text", output_modalities: ["text"] },
+      { id: "grok-video", output_modalities: ["video"] },
+    ], "image").map((m) => m.value)).toEqual(["xai/grok-imagine-image", "xai/grok-imagine-image-2.0"]);
+  });
 });

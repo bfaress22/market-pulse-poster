@@ -23,14 +23,22 @@ serve(async (req) => {
       .select("xai_api_key").eq("user_id", auth.user.id).maybeSingle();
     if (error) return json(500, { error: "Impossible de charger les paramètres xAI." });
     if (!settings?.xai_api_key) return json(400, { error: "Enregistre d’abord ta clé API xAI dans les paramètres." });
-    const response = await fetch("https://api.x.ai/v1/language-models", {
-      headers: { Authorization: `Bearer ${settings.xai_api_key}` },
-    });
-    if (!response.ok) return json(response.status, { error: xaiErrorMessage(response.status) });
-    const data = await response.json();
-    const models = normalizeGrokModels(data.models ?? data.data);
-    if (!models.length) return json(502, { error: "Aucun modèle de texte xAI disponible pour cette clé." });
-    return json(200, { models });
+    const loadModels = async (endpoint: string, modality: "text" | "image") => {
+      try {
+        const response = await fetch(`https://api.x.ai/v1/${endpoint}`, {
+          headers: { Authorization: `Bearer ${settings.xai_api_key}` },
+        });
+        if (!response.ok) return { models: [], error: xaiErrorMessage(response.status) };
+        const data = await response.json();
+        return { models: normalizeGrokModels(data.models ?? data.data, modality), error: null };
+      } catch {
+        return { models: [], error: "Impossible de joindre xAI. Réessaie plus tard." };
+      }
+    };
+    const [text, image] = await Promise.all([
+      loadModels("language-models", "text"), loadModels("image-generation-models", "image"),
+    ]);
+    return json(200, { models: text.models, imageModels: image.models, textError: text.error, imageError: image.error });
   } catch {
     return json(502, { error: "Impossible de joindre xAI. Réessaie plus tard." });
   }
