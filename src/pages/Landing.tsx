@@ -247,7 +247,8 @@ const Landing = () => {
           <span>Gemini</span>
           <span>Firecrawl</span>
           <span>LinkedIn API</span>
-          <span>Lovable Cloud</span>
+          <span>Supabase</span>
+          <span>xAI</span>
         </div>
       </section>
 

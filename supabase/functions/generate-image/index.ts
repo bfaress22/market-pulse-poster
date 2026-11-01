@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateXaiImage } from "../_shared/xai-image.ts";
+import { generateImageRouted, mapImageError } from "../_shared/ai-image.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -141,7 +142,7 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("image_model, use_byok, xai_api_key").eq("user_id", userId).maybeSingle();
+      .select("image_model, use_byok, xai_api_key, gemini_api_key").eq("user_id", userId).maybeSingle();
 
     let model = requestedModel || s?.image_model || "google/gemini-3.1-flash-image-preview";
     if (!/^xai\/[a-zA-Z0-9._-]+$/.test(model) && !ALLOWED_MODELS.includes(model)) model = "google/gemini-3.1-flash-image-preview";
@@ -154,44 +155,19 @@ serve(async (req) => {
       base64 = image.base64;
       mimeType = image.mimeType;
     } else {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) return json(500, { success: false, error: "LOVABLE_API_KEY not configured" });
-
-
-    const userContent: unknown = inputImageUrl
-      ? [
-          { type: "text", text: `Edit this image following these instructions: ${fullPrompt}` },
-          { type: "image_url", image_url: { url: inputImageUrl } },
-        ]
-      : fullPrompt;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
+      const image = await generateImageRouted({
+        settings: s ?? {},
         model,
-        messages: [{ role: "user", content: userContent }],
-        modalities: ["image", "text"],
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) return json(429, { success: false, error: "Rate limit exceeded." });
-      if (response.status === 402) return json(402, { success: false, error: "Add credits to your workspace." });
-      const t = await response.text();
-      console.error("AI image error:", response.status, t);
-      if (response.status === 403 && t.includes("credit_limit_reached")) {
-        return json(403, { success: false, error: "Limite de crédits IA atteinte pour cet espace de travail. Le propriétaire doit augmenter la limite (Settings → Plans & credits)." });
+        prompt: fullPrompt,
+        aspectRatio,
+        inputImageUrl,
+      });
+      if ("message" in image) {
+        const mapped = mapImageError(image);
+        return json(mapped.status, { success: false, error: mapped.error });
       }
-      return json(500, { success: false, error: `Image generation failed [${response.status}]: ${t.substring(0, 300)}` });
-    }
-
-
-    const data = await response.json();
-    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-    if (!imageUrl) return json(500, { success: false, error: "No image generated" });
-
-    base64 = imageUrl.replace(/^data:image\/\w+;base64,/, "");
+      base64 = image.base64;
+      mimeType = image.mimeType;
     }
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const fileName = `${userId}/${crypto.randomUUID()}.${mimeType === "image/jpeg" ? "jpg" : "png"}`;

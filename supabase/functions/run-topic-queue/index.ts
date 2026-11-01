@@ -3,6 +3,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateXaiImage } from "../_shared/xai-image.ts";
+import { generateImageRouted, mapImageError } from "../_shared/ai-image.ts";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
 import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
@@ -68,29 +69,31 @@ Return JSON via the write_post tool.`;
 async function generateImage(prompt: string, model: string | null, supabase: any, userId: string): Promise<string | null> {
   let base64: string;
   let mimeType = "image/png";
+  const fullPrompt = `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.`;
+  const { data: settings, error } = await supabase
+    .from("user_settings")
+    .select("use_byok, xai_api_key, gemini_api_key")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error("Impossible de charger les paramètres image.");
+
   if (model?.startsWith("xai/")) {
-    const { data: settings, error } = await supabase.from("user_settings").select("use_byok, xai_api_key").eq("user_id", userId).maybeSingle();
-    if (error) throw new Error("Impossible de charger les paramètres xAI.");
-    const image = await generateXaiImage({ settings, model, prompt: `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.`, aspectRatio: "1:1" });
+    const image = await generateXaiImage({ settings, model, prompt: fullPrompt, aspectRatio: "1:1" });
     base64 = image.base64;
     mimeType = image.mimeType;
   } else {
-  const key = Deno.env.get("LOVABLE_API_KEY");
-  if (!key) return null;
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+    const image = await generateImageRouted({
+      settings: settings ?? {},
       model: model || "google/gemini-3.1-flash-image-preview",
-      messages: [{ role: "user", content: `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.` }],
-      modalities: ["image", "text"],
-    }),
-  });
-  if (!res.ok) { console.warn("img gen fail", res.status); return null; }
-  const data = await res.json();
-  const dataUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!dataUrl) return null;
-  base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+      prompt: fullPrompt,
+      aspectRatio: "1:1",
+    });
+    if ("message" in image) {
+      console.warn("img gen fail", mapImageError(image));
+      return null;
+    }
+    base64 = image.base64;
+    mimeType = image.mimeType;
   }
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   const fileName = `${userId}/${crypto.randomUUID()}.${mimeType === "image/jpeg" ? "jpg" : "png"}`;
@@ -106,10 +109,10 @@ async function generateImage(prompt: string, model: string | null, supabase: any
 async function processTopic(supabase: any, topic: any) {
   const userId = topic.user_id;
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, xai_api_key, tone_instructions, image_model")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, image_model")
     .eq("user_id", userId).maybeSingle();
 
-  const { model, url, key } = resolveTextProvider(us?.post_model || "google/gemini-3-flash-preview", us, Deno.env.get("LOVABLE_API_KEY"));
+  const { model, url, key } = resolveTextProvider(us?.post_model || "google/gemini-3-flash-preview", us);
 
   const generated = await generatePostText({
     subject: topic.subject,

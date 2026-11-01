@@ -70,7 +70,7 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, xai_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions")
       .eq("user_id", userId).maybeSingle();
 
     // Resolve saved sources by id
@@ -90,7 +90,7 @@ serve(async (req) => {
 
     const sourceContext = resolvedSources.length ? await gatherSourceContext(resolvedSources) : "";
 
-    const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s, Deno.env.get("LOVABLE_API_KEY"));
+    const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s);
 
     const LANG_NAMES: Record<string, string> = {
       fr: "French (Français)", en: "English", es: "Spanish (Español)",

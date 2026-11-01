@@ -19,7 +19,7 @@ type Settings = {
 };
 
 async function callAi(model: string, settings: Settings, messages: unknown[], tools: unknown[], toolName: string) {
-  const provider = resolveTextProvider(model, settings, Deno.env.get("LOVABLE_API_KEY"));
+  const provider = resolveTextProvider(model, settings);
   const { url, key } = provider;
   model = provider.model;
 

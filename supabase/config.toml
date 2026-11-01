@@ -1,4 +1,4 @@
-project_id = "vlkirfionnppaoprsnuh"
+project_id = "rmoubcwfgupjocqjfqpg"
 
 # Cron callers send X-Cron-Secret (or CRON_SECRET bearer). Functions verify that themselves.
 [functions.publish-scheduled]

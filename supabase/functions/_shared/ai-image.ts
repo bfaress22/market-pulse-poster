@@ -1,7 +1,6 @@
 /**
- * Image generation routing: BYOK Google Gemini (direct API) vs Lovable AI Gateway.
- * If the user enables BYOK and provides a Gemini key, we call Google directly
- * (no Lovable credits consumed). Otherwise we use the Lovable AI Gateway.
+ * Image generation routing: BYOK Google Gemini (direct API).
+ * xAI images are handled separately via xai-image.ts.
  */
 
 export type AiImageSettings = {
@@ -49,10 +48,10 @@ export function mapImageError(err: ImageErr): { status: number; error: string } 
   if (err.status === 429 || /429|quota|rate|RESOURCE_EXHAUSTED/i.test(msg)) {
     return { status: 429, error: "Quota du fournisseur atteint. Réessaie dans un moment (ou vérifie ta facturation Google)." };
   }
-  if (err.status === 402 || err.status === 403 || /credit/i.test(msg)) {
+  if (err.status === 402 || err.status === 403 || /credit|billing/i.test(msg)) {
     return {
       status: 402,
-      error: "Crédits IA Lovable épuisés. Active le BYOK avec ta clé Google Gemini dans Réglages, ou recharge des crédits.",
+      error: "Crédits ou accès Gemini insuffisants. Vérifie ta clé et la facturation Google AI Studio.",
     };
   }
   if (err.status === 401 || /API_KEY|invalid.*key/i.test(msg)) {
@@ -130,56 +129,8 @@ export async function generateImageWithGemini(opts: {
   }
 }
 
-/** Lovable AI Gateway (consumes Lovable credits) — used when BYOK is off. */
-export async function generateImageWithLovable(opts: {
-  apiKey: string;
-  model: string;
-  prompt: string;
-  inputImageUrl?: string;
-}): Promise<ImageResult> {
-  const userContent: unknown = opts.inputImageUrl
-    ? [
-        { type: "text", text: `Edit this image following these instructions: ${opts.prompt}` },
-        { type: "image_url", image_url: { url: opts.inputImageUrl } },
-      ]
-    : opts.prompt;
-
-  try {
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: opts.model,
-        messages: [{ role: "user", content: userContent }],
-        modalities: ["image", "text"],
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("Lovable image error:", response.status, text.slice(0, 300));
-      return { status: response.status, message: text };
-    }
-
-    const data = await response.json();
-    const imageUrl: string | undefined = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-    if (!imageUrl) return { status: 502, message: "Lovable n'a retourné aucune image" };
-
-    const match = imageUrl.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
-    if (match) return { mimeType: match[1], base64: match[2] };
-
-    const inline = await fetchImageAsInline(imageUrl);
-    if (!inline) return { status: 502, message: "Impossible de télécharger l'image générée" };
-    return { base64: inline.data, mimeType: inline.mimeType };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { status: 502, message };
-  }
-}
-
 /**
- * Route the request: BYOK Gemini direct when enabled + key present,
- * otherwise the Lovable AI Gateway.
+ * Route Gemini image requests via the user's BYOK key (or GEMINI_API_KEY fallback).
  */
 export async function generateImageRouted(opts: {
   settings: AiImageSettings;
@@ -192,33 +143,23 @@ export async function generateImageRouted(opts: {
   const envGeminiKey = (Deno.env.get("GEMINI_API_KEY") ?? "").trim();
   const geminiKey = byokKey || (opts.settings.use_byok ? envGeminiKey : "");
 
-  if (opts.settings.use_byok) {
-    if (!geminiKey) {
-      return {
-        status: 400,
-        message: "BYOK est activé mais aucune clé Google Gemini n'est configurée. Ajoute-la dans Réglages → BYOK.",
-      };
-    }
-    return generateImageWithGemini({
-      apiKey: geminiKey,
-      model: opts.model,
-      prompt: opts.prompt,
-      aspectRatio: opts.aspectRatio,
-      inputImageUrl: opts.inputImageUrl,
-    });
-  }
-
-  const lovableKey = (Deno.env.get("LOVABLE_API_KEY") ?? "").trim();
-  if (!lovableKey) {
+  if (!opts.settings.use_byok) {
     return {
-      status: 500,
-      message: "LOVABLE_API_KEY non configurée. Active le BYOK avec une clé Gemini, ou configure le secret Lovable.",
+      status: 400,
+      message: "Active BYOK et ajoute une clé Google Gemini dans Réglages pour générer des images.",
     };
   }
-  return generateImageWithLovable({
-    apiKey: lovableKey,
+  if (!geminiKey) {
+    return {
+      status: 400,
+      message: "BYOK est activé mais aucune clé Google Gemini n'est configurée. Ajoute-la dans Réglages → BYOK.",
+    };
+  }
+  return generateImageWithGemini({
+    apiKey: geminiKey,
     model: opts.model,
     prompt: opts.prompt,
+    aspectRatio: opts.aspectRatio,
     inputImageUrl: opts.inputImageUrl,
   });
 }

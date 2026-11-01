@@ -125,10 +125,18 @@ const Settings = () => {
   const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text?.length ? grokModels.data.text : POST_MODELS.filter((m) => m.provider === "xai"))];
   const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image?.length ? grokModels.data.image : IMAGE_MODELS.filter((m) => m.provider === "xai"))];
   if (s?.image_model && !imageModels.some((m) => m.value === s.image_model)) {
-    imageModels.push({ value: s.image_model, label: s.image_model, provider: s.image_model.startsWith("xai/") ? "xai" : "lovable" });
+    imageModels.push({
+      value: s.image_model,
+      label: s.image_model,
+      provider: s.image_model.startsWith("xai/") ? "xai" : s.image_model.startsWith("openai/") ? "openai" : "gemini",
+    });
   }
   if (s?.post_model && !postModels.some((m) => m.value === s.post_model)) {
-    postModels.push({ value: s.post_model, label: s.post_model, provider: s.post_model.startsWith("xai/") ? "xai" : "lovable" });
+    postModels.push({
+      value: s.post_model,
+      label: s.post_model,
+      provider: s.post_model.startsWith("xai/") ? "xai" : s.post_model.startsWith("openai/") ? "openai" : "gemini",
+    });
   }
 
   const setDefaultTarget = useMutation({
@@ -658,7 +666,7 @@ const Settings = () => {
         <CardContent className="space-y-4">
           <div className="space-y-1">
             <Label>Modèle de génération de post (texte)</Label>
-            <Select value={s.post_model} onValueChange={(v) => setS({ ...s, post_model: v, use_byok: v.startsWith("xai/") ? true : s.use_byok })}>
+            <Select value={s.post_model} onValueChange={(v) => setS({ ...s, post_model: v, use_byok: true })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {postModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
@@ -680,7 +688,7 @@ const Settings = () => {
           </div>
           <div className="space-y-1">
             <Label>Modèle de génération d'image</Label>
-            <Select value={s.image_model} onValueChange={(v) => setS({ ...s, image_model: v, use_byok: v.startsWith("xai/") ? true : s.use_byok })}>
+            <Select value={s.image_model} onValueChange={(v) => setS({ ...s, image_model: v, use_byok: true })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {imageModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
@@ -702,7 +710,7 @@ const Settings = () => {
           <div className="flex items-center justify-between pt-2 border-t">
             <div>
               <Label>Utilise tes propres clés API (BYOK)</Label>
-              <p className="text-xs text-muted-foreground">Utilise tes propres clés au lieu de Lovable AI / connecteurs partagés. Tu ne paies que ce que tu consommes chez chaque fournisseur.</p>
+              <p className="text-xs text-muted-foreground">Obligatoire : l’app appelle directement OpenAI, Gemini ou xAI avec tes clés. Tu ne paies que ce que tu consommes chez chaque fournisseur.</p>
             </div>
             <Switch checked={s.use_byok} onCheckedChange={(v) => setS({ ...s, use_byok: v })} />
           </div>
@@ -743,7 +751,7 @@ const Settings = () => {
               </div>
 
               <div className="rounded-md bg-muted/50 p-3 text-[11px] text-muted-foreground">
-                💡 Les modèles Grok texte et image nécessitent ta clé xAI et utilisent tes crédits xAI. Les autres images utilisent Lovable AI.
+                💡 Grok → clé xAI · Gemini (texte/image) → clé Google · GPT → clé OpenAI. Active BYOK et enregistre la clé du fournisseur choisi.
               </div>
             </div>
           )}

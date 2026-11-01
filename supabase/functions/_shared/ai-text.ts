@@ -2,19 +2,56 @@ export type TextSettings = {
   use_byok?: boolean;
   openai_api_key?: string | null;
   xai_api_key?: string | null;
+  gemini_api_key?: string | null;
 };
 
-export function resolveTextProvider(model: string, settings: TextSettings | null, lovableKey?: string) {
+function requireByok(settings: TextSettings | null) {
+  if (!settings?.use_byok) {
+    throw new Error("Active tes propres clés API (BYOK) dans les paramètres pour générer du contenu.");
+  }
+}
+
+/** Route text generation to the user's BYOK provider (xAI / OpenAI / Gemini). No shared gateway. */
+export function resolveTextProvider(model: string, settings: TextSettings | null) {
   if (model.startsWith("xai/")) {
-    if (!settings?.use_byok) throw new Error("Active tes propres clés API dans les paramètres pour utiliser Grok.");
-    if (!settings.xai_api_key?.trim()) throw new Error("Ajoute et enregistre ta clé API xAI dans les paramètres pour utiliser Grok.");
-    return { model: model.slice(4), url: "https://api.x.ai/v1/chat/completions", key: settings.xai_api_key.trim() };
+    requireByok(settings);
+    if (!settings?.xai_api_key?.trim()) {
+      throw new Error("Ajoute et enregistre ta clé API xAI dans les paramètres pour utiliser Grok.");
+    }
+    return {
+      model: model.slice(4),
+      url: "https://api.x.ai/v1/chat/completions",
+      key: settings.xai_api_key.trim(),
+    };
   }
-  if (settings?.use_byok && model.startsWith("openai/") && settings.openai_api_key) {
-    return { model: model.slice(7), url: "https://api.openai.com/v1/chat/completions", key: settings.openai_api_key };
+
+  if (model.startsWith("openai/")) {
+    requireByok(settings);
+    if (!settings?.openai_api_key?.trim()) {
+      throw new Error("Ajoute et enregistre ta clé API OpenAI dans les paramètres.");
+    }
+    return {
+      model: model.slice(7),
+      url: "https://api.openai.com/v1/chat/completions",
+      key: settings.openai_api_key.trim(),
+    };
   }
-  if (!lovableKey) throw new Error("Aucune clé Lovable AI disponible.");
-  return { model, url: "https://ai.gateway.lovable.dev/v1/chat/completions", key: lovableKey };
+
+  if (model.startsWith("google/")) {
+    requireByok(settings);
+    if (!settings?.gemini_api_key?.trim()) {
+      throw new Error("Ajoute et enregistre ta clé API Google Gemini dans les paramètres.");
+    }
+    return {
+      model: model.replace(/^google\//, ""),
+      url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      key: settings.gemini_api_key.trim(),
+    };
+  }
+
+  throw new Error(
+    `Modèle non supporté: ${model}. Choisis un modèle Gemini, OpenAI ou Grok dans les réglages (BYOK).`,
+  );
 }
 
 export function normalizeGrokModels(models: unknown, modality: "text" | "image" = "text"): { value: string; label: string }[] {
@@ -22,7 +59,11 @@ export function normalizeGrokModels(models: unknown, modality: "text" | "image" 
   const ids = new Set<string>();
   for (const model of models) {
     if (!model || typeof model !== "object") continue;
-    const { id, aliases, output_modalities } = model;
+    const { id, aliases, output_modalities } = model as {
+      id?: unknown;
+      aliases?: unknown;
+      output_modalities?: unknown;
+    };
     if (Array.isArray(output_modalities) && !output_modalities.includes(modality)) continue;
     for (const name of [id, ...(Array.isArray(aliases) ? aliases : [])]) {
       if (typeof name === "string" && /^[a-zA-Z0-9._-]+$/.test(name)) ids.add(name);

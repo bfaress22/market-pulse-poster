@@ -1,28 +1,31 @@
-# autoLinkedin Dadhboard
+# LinkedIn AutoPost (market-pulse-poster)
 
-I want to build an app to run an n8n workflow, the aime of this workflow is to publish regular postes in linkedin
-first the workflow will analyse latest news of commodity market from https://www.barchart.com/news/commodities
-then create a post based of those news
+App to generate and publish LinkedIn posts from commodity / news sources (Firecrawl + AI BYOK + LinkedIn API).
 
-This project was built with [Lovable](https://lovable.dev).
+## Stack
 
-**Live app**: https://market-pulse-poster.lovable.app
+- Vite + React + TypeScript + Tailwind / shadcn
+- Supabase (Auth, Postgres, Edge Functions, Storage, pg_cron)
 
-## Build with Lovable
+## Setup
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/8360ec43-6146-4633-ac07-0371d8c9b19d).
+1. Copy `.env` with your project values:
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+```env
+VITE_SUPABASE_PROJECT_ID=your_project_ref
+VITE_SUPABASE_URL=https://your_project_ref.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your_anon_or_publishable_key
+```
 
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+2. Install and run:
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
 npm i
 npm run dev
 ```
+
+3. In Supabase Dashboard → Authentication, enable Email and (optionally) Google OAuth with your redirect URL.
+
+4. In the app Settings, enable BYOK and add at least one provider key (OpenAI, Gemini, and/or xAI). Add Firecrawl for scraping.
+
+5. Edge Function secrets (Dashboard → Edge Functions → Secrets): `CRON_SECRET`, optional `FIRECRAWL_API_KEY` / `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` / `GEMINI_API_KEY` as fallbacks.
