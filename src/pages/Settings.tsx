@@ -97,7 +97,15 @@ const Settings = () => {
     retry: false,
     staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<{ text: AiModel[]; image: AiModel[]; textError?: string; imageError?: string }> => {
-      const { data, error } = await supabase.functions.invoke("list-grok-models");
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session || (session.expires_at ?? 0) * 1000 < Date.now() + 30_000) {
+        const refreshed = await supabase.auth.refreshSession();
+        session = refreshed.data.session;
+      }
+      if (!session?.access_token) throw new Error("Session expirée : reconnecte-toi pour charger les modèles Grok.");
+      const { data, error } = await supabase.functions.invoke("list-grok-models", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
       if (error) {
         let message = "Impossible de charger les modèles Grok.";
         try {
