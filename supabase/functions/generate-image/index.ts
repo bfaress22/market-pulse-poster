@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateXaiImage } from "../_shared/xai-image.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,15 +141,22 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("image_model").eq("user_id", userId).maybeSingle();
+      .select("image_model, use_byok, xai_api_key").eq("user_id", userId).maybeSingle();
 
     let model = requestedModel || s?.image_model || "google/gemini-3.1-flash-image-preview";
-    if (!ALLOWED_MODELS.includes(model)) model = "google/gemini-3.1-flash-image-preview";
+    if (!/^xai\/[a-zA-Z0-9._-]+$/.test(model) && !ALLOWED_MODELS.includes(model)) model = "google/gemini-3.1-flash-image-preview";
 
+    const fullPrompt = buildPrompt({ prompt });
+    let base64: string;
+    let mimeType = "image/png";
+    if (model.startsWith("xai/")) {
+      const image = await generateXaiImage({ settings: s, model, prompt: fullPrompt, aspectRatio, inputImageUrl });
+      base64 = image.base64;
+      mimeType = image.mimeType;
+    } else {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) return json(500, { success: false, error: "LOVABLE_API_KEY not configured" });
 
-    const fullPrompt = buildPrompt({ prompt });
 
     const userContent: unknown = inputImageUrl
       ? [
@@ -183,10 +191,11 @@ serve(async (req) => {
     const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
     if (!imageUrl) return json(500, { success: false, error: "No image generated" });
 
-    const base64 = imageUrl.replace(/^data:image\/\w+;base64,/, "");
+    base64 = imageUrl.replace(/^data:image\/\w+;base64,/, "");
+    }
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    const fileName = `${userId}/${crypto.randomUUID()}.png`;
-    const { error: upErr } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: "image/png" });
+    const fileName = `${userId}/${crypto.randomUUID()}.${mimeType === "image/jpeg" ? "jpg" : "png"}`;
+    const { error: upErr } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: mimeType });
     if (upErr) {
       console.error("upload err", upErr);
       return json(500, { success: false, error: "IMAGE_NOT_PERSISTED: impossible d'enregistrer l'image dans le stockage." });

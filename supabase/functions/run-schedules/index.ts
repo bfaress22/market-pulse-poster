@@ -1,6 +1,7 @@
 // Cron-triggered: runs due schedules — scrapes sources, generates post + optional image, publishes to LinkedIn
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateXaiImage } from "../_shared/xai-image.ts";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
 import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
@@ -127,6 +128,15 @@ Return JSON via the write_post tool.`;
 
 // ===== AI image =====
 async function generateImage(prompt: string, model: string, supabase: any, userId: string): Promise<string | null> {
+  let base64: string;
+  let mimeType = "image/png";
+  if (model?.startsWith("xai/")) {
+    const { data: settings, error } = await supabase.from("user_settings").select("use_byok, xai_api_key").eq("user_id", userId).maybeSingle();
+    if (error) throw new Error("Impossible de charger les paramètres xAI.");
+    const image = await generateXaiImage({ settings, model, prompt: `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.`, aspectRatio: "1:1" });
+    base64 = image.base64;
+    mimeType = image.mimeType;
+  } else {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) return null;
   const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -142,10 +152,11 @@ async function generateImage(prompt: string, model: string, supabase: any, userI
   const data = await res.json();
   const dataUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
   if (!dataUrl) return null;
-  const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  }
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const fileName = `${userId}/${crypto.randomUUID()}.png`;
-  const { error } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: "image/png" });
+  const fileName = `${userId}/${crypto.randomUUID()}.${mimeType === "image/jpeg" ? "jpg" : "png"}`;
+  const { error } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: mimeType });
   if (error) {
     console.warn("img storage fail", error.message);
     return null;
