@@ -122,8 +122,8 @@ const Settings = () => {
       return { text: normalize(data.models), image: normalize(data.imageModels), textError: data.textError, imageError: data.imageError };
     },
   });
-  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text ?? POST_MODELS.filter((m) => m.provider === "xai"))];
-  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image ?? IMAGE_MODELS.filter((m) => m.provider === "xai"))];
+  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text?.length ? grokModels.data.text : POST_MODELS.filter((m) => m.provider === "xai"))];
+  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image?.length ? grokModels.data.image : IMAGE_MODELS.filter((m) => m.provider === "xai"))];
   if (s?.image_model && !imageModels.some((m) => m.value === s.image_model)) {
     imageModels.push({ value: s.image_model, label: s.image_model, provider: s.image_model.startsWith("xai/") ? "xai" : "lovable" });
   }
