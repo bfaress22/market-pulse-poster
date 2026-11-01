@@ -32,3 +32,12 @@ describe("xAI image generation", () => {
     await expect(generateXaiImage(options)).rejects.toThrow("Crédits xAI insuffisants");
   });
 });
+import { normalizeXaiAspectRatio } from "../../supabase/functions/_shared/xai-image";
+describe("xAI aspect ratio", () => {
+  it("maps Image Studio labels to xAI ratios", () => {
+    expect(normalizeXaiAspectRatio("1:1 square, perfect for LinkedIn feed")).toBe("1:1");
+    expect(normalizeXaiAspectRatio("16:9 landscape, banner format")).toBe("16:9");
+    expect(normalizeXaiAspectRatio("4:5 portrait, mobile-optimized")).toBe("3:4");
+    expect(normalizeXaiAspectRatio(undefined)).toBe("1:1");
+  });
+});
