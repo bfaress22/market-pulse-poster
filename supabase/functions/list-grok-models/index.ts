@@ -14,11 +14,25 @@ serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !serviceKey) return json(500, { error: "Configuration indisponible." });
   const supabase = createClient(url, serviceKey);
-  const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
   if (!token) return json(401, { error: "Connexion requise." });
   try {
-    const { data: auth, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !auth.user) return json(401, { error: "Connexion requise." });
+    const userClient = createClient(url, Deno.env.get("SUPABASE_ANON_KEY") ?? serviceKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    let userId: string | undefined;
+    const { data: claims } = await userClient.auth.getClaims(token).catch(() => ({ data: null }));
+    userId = claims?.claims?.sub;
+    if (!userId) {
+      const { data: auth } = await supabase.auth.getUser(token);
+      userId = auth.user?.id;
+    }
+    if (!userId) {
+      console.warn("list-grok-models: invalid session token");
+      return json(401, { error: "Session expirée : reconnecte-toi." });
+    }
+    const auth = { user: { id: userId } };
     const { data: settings, error } = await supabase.from("user_settings")
       .select("xai_api_key").eq("user_id", auth.user.id).maybeSingle();
     if (error) return json(500, { error: "Impossible de charger les paramètres xAI." });

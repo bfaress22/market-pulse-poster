@@ -106,6 +106,10 @@ const Settings = () => {
       const { data, error } = await supabase.functions.invoke("list-grok-models", {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      if (error && (error as any).context?.status === 401) {
+        const msg = "Session expirée : déconnecte-toi puis reconnecte-toi pour charger les modèles Grok.";
+        return { text: [], image: [], textError: msg, imageError: msg };
+      }
       if (error) {
         let message = "Impossible de charger les modèles Grok.";
         try {
@@ -118,8 +122,8 @@ const Settings = () => {
       return { text: normalize(data.models), image: normalize(data.imageModels), textError: data.textError, imageError: data.imageError };
     },
   });
-  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text ?? POST_MODELS.filter((m) => m.provider === "xai"))];
-  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image ?? IMAGE_MODELS.filter((m) => m.provider === "xai"))];
+  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text?.length ? grokModels.data.text : POST_MODELS.filter((m) => m.provider === "xai"))];
+  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image?.length ? grokModels.data.image : IMAGE_MODELS.filter((m) => m.provider === "xai"))];
   if (s?.image_model && !imageModels.some((m) => m.value === s.image_model)) {
     imageModels.push({ value: s.image_model, label: s.image_model, provider: s.image_model.startsWith("xai/") ? "xai" : "lovable" });
   }
