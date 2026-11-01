@@ -106,6 +106,10 @@ const Settings = () => {
       const { data, error } = await supabase.functions.invoke("list-grok-models", {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      if (error && (error as any).context?.status === 401) {
+        const msg = "Session expirée : déconnecte-toi puis reconnecte-toi pour charger les modèles Grok.";
+        return { text: [], image: [], textError: msg, imageError: msg };
+      }
       if (error) {
         let message = "Impossible de charger les modèles Grok.";
         try {
