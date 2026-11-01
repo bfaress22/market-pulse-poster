@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,26 +13,15 @@ type Settings = {
   post_model: string;
   use_byok: boolean;
   openai_api_key: string | null;
+  xai_api_key: string | null;
   gemini_api_key: string | null;
   tone_instructions: string | null;
 };
 
 async function callAi(model: string, settings: Settings, messages: unknown[], tools: unknown[], toolName: string) {
-  let url = "https://ai.gateway.lovable.dev/v1/chat/completions";
-  let key = Deno.env.get("LOVABLE_API_KEY");
-
-  if (settings.use_byok) {
-    if (model.startsWith("openai/") && settings.openai_api_key) {
-      url = "https://api.openai.com/v1/chat/completions";
-      key = settings.openai_api_key;
-      model = model.replace("openai/", "");
-    } else if (model.startsWith("google/") && settings.gemini_api_key) {
-      // For Gemini BYOK, fall back to Lovable AI for compatibility (Gemini's REST API differs).
-      // Users can plug their own Gemini key via OpenAI-compatible proxies if needed.
-    }
-  }
-
-  if (!key) throw new Error("No API key available");
+  const provider = resolveTextProvider(model, settings, Deno.env.get("LOVABLE_API_KEY"));
+  const { url, key } = provider;
+  model = provider.model;
 
   const res = await fetch(url, {
     method: "POST",
@@ -39,6 +29,7 @@ async function callAi(model: string, settings: Settings, messages: unknown[], to
     body: JSON.stringify({ model, messages, tools, tool_choice: { type: "function", function: { name: toolName } } }),
   });
   if (!res.ok) {
+    if (url.startsWith("https://api.x.ai/")) throw new Error(xaiErrorMessage(res.status));
     const t = await res.text();
     throw new Error(`AI call failed [${res.status}]: ${t}`);
   }
@@ -59,11 +50,11 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, gemini_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions")
       .eq("user_id", userId).maybeSingle();
     const settings: Settings = s as Settings ?? {
       post_model: "google/gemini-3-flash-preview", use_byok: false,
-      openai_api_key: null, gemini_api_key: null, tone_instructions: null,
+      openai_api_key: null, xai_api_key: null, gemini_api_key: null, tone_instructions: null,
     };
 
     const LANG_NAMES: Record<string, string> = {

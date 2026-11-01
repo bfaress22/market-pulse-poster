@@ -4,11 +4,12 @@
 export type AiModel = {
   value: string;
   label: string;
-  provider: "lovable" | "openai" | "gemini";
+  provider: "lovable" | "openai" | "gemini" | "xai";
   description?: string;
 };
 
 export const POST_MODELS: AiModel[] = [
+  { value: "xai/grok-4.7", label: "Grok 4.7 (API xAI)", provider: "xai" },
   { value: "google/gemini-3-flash-preview", label: "Gemini 3 Flash (default, fast)", provider: "lovable" },
   { value: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (best reasoning)", provider: "lovable" },
   { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "lovable" },

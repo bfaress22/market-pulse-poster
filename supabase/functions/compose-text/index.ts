@@ -1,6 +1,7 @@
 // On-demand LinkedIn text generator with free-form prompt + optional sources (URLs/keywords/ideas) + image context
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,7 +70,7 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, tone_instructions")
       .eq("user_id", userId).maybeSingle();
 
     // Resolve saved sources by id
@@ -89,15 +90,7 @@ serve(async (req) => {
 
     const sourceContext = resolvedSources.length ? await gatherSourceContext(resolvedSources) : "";
 
-    let model = s?.post_model || "google/gemini-3-flash-preview";
-    let url = "https://ai.gateway.lovable.dev/v1/chat/completions";
-    let key = Deno.env.get("LOVABLE_API_KEY");
-    if (s?.use_byok && model.startsWith("openai/") && s.openai_api_key) {
-      url = "https://api.openai.com/v1/chat/completions";
-      key = s.openai_api_key;
-      model = model.replace("openai/", "");
-    }
-    if (!key) return json(500, { success: false, error: "No API key" });
+    const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s, Deno.env.get("LOVABLE_API_KEY"));
 
     const LANG_NAMES: Record<string, string> = {
       fr: "French (Français)", en: "English", es: "Spanish (Español)",
@@ -153,6 +146,7 @@ Return JSON via the write_post tool.`;
       }),
     });
     if (!res.ok) {
+      if (url.startsWith("https://api.x.ai/")) return json(res.status, { success: false, error: xaiErrorMessage(res.status) });
       if (res.status === 429) return json(429, { success: false, error: "Rate limit exceeded." });
       if (res.status === 402) return json(402, { success: false, error: "Add credits to your workspace." });
       const t = await res.text();

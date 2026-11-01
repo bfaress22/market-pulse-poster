@@ -14,10 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Save, Loader2, Link as LinkIcon, CheckCircle, XCircle,
+  Save, Loader2, RefreshCw, Link as LinkIcon, CheckCircle, XCircle,
   AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check, Building2, Clock,
 } from "lucide-react";
-import { POST_MODELS, IMAGE_MODELS } from "@/lib/ai-models";
+import { POST_MODELS, IMAGE_MODELS, type AiModel } from "@/lib/ai-models";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 import { useLinkedInTargets, targetHealth, HEALTH_META } from "@/hooks/useLinkedInTargets";
 
@@ -73,7 +73,7 @@ const TEXT_PROVIDERS: ByokProvider[] = [
   { field: "mistral_api_key", label: "Mistral AI", placeholder: "...", url: "https://console.mistral.ai/api-keys", hint: "Mistral Large, Medium, Small, Codestral." },
   { field: "groq_api_key", label: "Groq", placeholder: "gsk_...", url: "https://console.groq.com/keys", hint: "Llama 3.x, Mixtral — inférence ultra-rapide." },
   { field: "deepseek_api_key", label: "DeepSeek", placeholder: "sk-...", url: "https://platform.deepseek.com/api_keys", hint: "DeepSeek V3, R1 reasoning." },
-  { field: "xai_api_key", label: "xAI Grok", placeholder: "xai-...", url: "https://console.x.ai/", hint: "Grok 2, Grok 4." },
+  { field: "xai_api_key", label: "xAI Grok", placeholder: "xai-...", url: "https://console.x.ai/", hint: "Modèles Grok pour les posts. Facturation sur ton compte xAI." },
   { field: "perplexity_api_key", label: "Perplexity", placeholder: "pplx-...", url: "https://www.perplexity.ai/settings/api", hint: "Sonar (LLM avec recherche intégrée)." },
   { field: "openrouter_api_key", label: "OpenRouter", placeholder: "sk-or-...", url: "https://openrouter.ai/keys", hint: "Routeur unifié vers 200+ modèles (Llama, Qwen, Cohere…)." },
 ];
@@ -91,6 +91,28 @@ const Settings = () => {
   const [copied, setCopied] = useState(false);
   const [withPages, setWithPages] = useState(true);
   const { targets } = useLinkedInTargets();
+  const grokModels = useQuery({
+    queryKey: ["grok-models", user?.id, s?.has_xai_api_key],
+    enabled: !!user && !!s?.has_xai_api_key,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<AiModel[]> => {
+      const { data, error } = await supabase.functions.invoke("list-grok-models");
+      if (error) {
+        let message = "Impossible de charger les modèles Grok.";
+        try {
+          const body = await error.context?.json();
+          if (typeof body?.error === "string") message = body.error;
+        } catch { /* Keep the safe fallback. */ }
+        throw new Error(message);
+      }
+      return (data.models as { value: string; label: string }[]).map((model) => ({ ...model, provider: "xai" }));
+    },
+  });
+  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data ?? POST_MODELS.filter((m) => m.provider === "xai"))];
+  if (s?.post_model && !postModels.some((m) => m.value === s.post_model)) {
+    postModels.push({ value: s.post_model, label: s.post_model, provider: s.post_model.startsWith("xai/") ? "xai" : "lovable" });
+  }
 
   const setDefaultTarget = useMutation({
     mutationFn: async (id: string) => {
@@ -246,6 +268,7 @@ const Settings = () => {
     onSuccess: () => {
       toast({ title: "Paramètres enregistrés" });
       qc.invalidateQueries({ queryKey: ["user_settings"] });
+      qc.invalidateQueries({ queryKey: ["grok-models"] });
     },
     onError: (e) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
   });
@@ -618,12 +641,24 @@ const Settings = () => {
         <CardContent className="space-y-4">
           <div className="space-y-1">
             <Label>Modèle de génération de post (texte)</Label>
-            <Select value={s.post_model} onValueChange={(v) => setS({ ...s, post_model: v })}>
+            <Select value={s.post_model} onValueChange={(v) => setS({ ...s, post_model: v, use_byok: v.startsWith("xai/") ? true : s.use_byok })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {POST_MODELS.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
+                {postModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
               </SelectContent>
             </Select>
+            {s.post_model.startsWith("xai/") && !s.has_xai_api_key && (
+              <p className="text-xs text-destructive">Clé API xAI requise : renseigne-la ci-dessous puis enregistre les paramètres.</p>
+            )}
+            {s.has_xai_api_key && (
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="ghost" size="sm" disabled={grokModels.isFetching} onClick={() => grokModels.refetch()}>
+                  {grokModels.isFetching ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                  Actualiser les modèles Grok
+                </Button>
+                {grokModels.error && <p role="alert" className="text-xs text-destructive">{grokModels.error.message}</p>}
+              </div>
+            )}
           </div>
           <div className="space-y-1">
             <Label>Modèle de génération d'image</Label>
@@ -688,7 +723,7 @@ const Settings = () => {
               </div>
 
               <div className="rounded-md bg-muted/50 p-3 text-[11px] text-muted-foreground">
-                💡 Tu peux ne renseigner que certaines clés. Pour celles qui sont vides, l'app retombe automatiquement sur Lovable AI / connecteurs partagés.
+                💡 Grok nécessite ta clé xAI et utilise tes crédits xAI. Les modèles d’image restent sur Lovable AI.
               </div>
             </div>
           )}
