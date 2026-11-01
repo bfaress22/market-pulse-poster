@@ -1,0 +1,3 @@
+# Architecture rules
+- Resolve text provider routing in `supabase/functions/_shared/ai-text.ts` for all manual and automated generation paths so model selection uses the same per-user credentials everywhere.
+- Discover Grok language models server-side using the authenticated user's saved xAI key; return model metadata only, never credentials, so the picker reflects account availability without exposing secrets.
