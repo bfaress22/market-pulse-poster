@@ -28,10 +28,10 @@ async function generatePostText(opts: {
   subject: string; language: string; tone: string | null; model: string; key: string; url: string;
 }): Promise<{ title: string; content: string }> {
   const langName = LANG_NAMES[opts.language] || LANG_NAMES.fr;
-  const sys = `You write engaging LinkedIn posts.
-LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}. Never use another language.
-Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
-${opts.tone ? `Tone:\n${opts.tone}` : ""}
+  const sys = `Follow the topic exactly. Write a LinkedIn post that matches it.
+Prefer ${langName} unless the topic specifies another language.
+Do not add branding, hashtags, CTAs, or structure unless asked.
+${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}
 Return JSON via the write_post tool.`;
 
   const res = await fetch(opts.url, {
@@ -41,7 +41,7 @@ Return JSON via the write_post tool.`;
       model: opts.model,
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: `Topic: ${opts.subject}` },
+        { role: "user", content: opts.subject },
       ],
       tools: [{
         type: "function",
@@ -97,8 +97,8 @@ async function generateImage(prompt: string, model: string | null, supabase: any
   }
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   const fileName = `${userId}/${crypto.randomUUID()}.${mimeType === "image/jpeg" ? "jpg" : "png"}`;
-  const { error } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: mimeType });
-  if (error) return null;
+  const { error: upErr } = await supabase.storage.from("post-assets").upload(fileName, bytes, { contentType: mimeType });
+  if (upErr) return null;
   const { data: signed } = await supabase.storage.from("post-assets").createSignedUrl(fileName, 60 * 60 * 24 * 7);
   return signed?.signedUrl ?? null;
 }

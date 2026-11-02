@@ -1,0 +1,1 @@
+{"name":"linkedin-oauth","entrypoint_path":"index.ts","verify_jwt":true,"fileNames":["index.ts"],"fileCount":1}

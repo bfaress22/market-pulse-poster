@@ -67,7 +67,7 @@ serve(async (req) => {
         return json(401, {
           success: false,
           error: "NOT_AUTHENTICATED",
-          message: "Tu dois être connecté à ton compte CommoHedge avant de lier LinkedIn. Redirection vers la page de connexion...",
+          message: "Tu dois être connecté avant de lier LinkedIn. Redirection vers la page de connexion...",
           redirectTo: "/auth",
         });
       }
@@ -115,7 +115,7 @@ serve(async (req) => {
         return json(401, {
           success: false,
           error: "NOT_AUTHENTICATED",
-          message: "Tu dois être connecté à ton compte CommoHedge avant de lier LinkedIn. Redirection vers la page de connexion...",
+          message: "Tu dois être connecté avant de lier LinkedIn. Redirection vers la page de connexion...",
           redirectTo: "/auth",
         });
       }

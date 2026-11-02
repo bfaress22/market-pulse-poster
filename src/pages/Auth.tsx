@@ -105,7 +105,7 @@ const Auth = () => {
           {linkedinRedirect?.linkedinAuthRequired && (
             <div className="mb-4 p-3 rounded-lg bg-muted border text-sm flex items-start gap-2">
               <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>{linkedinRedirect.message || "Connecte-toi à ton compte CommoHedge avant de lier LinkedIn."}</span>
+              <span>{linkedinRedirect.message || "Connecte-toi avant de lier LinkedIn."}</span>
             </div>
           )}
 

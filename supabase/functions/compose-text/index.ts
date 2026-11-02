@@ -1,15 +1,9 @@
-// On-demand LinkedIn text generator with free-form prompt + optional sources + market-brief research
+// On-demand LinkedIn text: follow the user prompt directly.
+// Memory / saved sources / tone are used only when useMemory=true (automation).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 import { gatherSourceContext, type SourceInput } from "../_shared/web-sources.ts";
-import {
-  detectLanguageOverride,
-  detectMarketBrief,
-  gatherMarketBriefContext,
-  marketBriefSystemPrompt,
-  wantsXPost,
-} from "../_shared/market-research.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,15 +11,20 @@ const corsHeaders = {
 };
 const json = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const LANG_NAMES: Record<string, string> = {
-  fr: "French (Français)", en: "English", es: "Spanish (Español)",
-  de: "German (Deutsch)", ar: "Arabic (العربية)",
-};
-
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, currentText, imageUrl, mode, sources, savedSourceIds, language } = await req.json();
+    const body = await req.json();
+    const {
+      prompt,
+      currentText,
+      imageUrl,
+      mode,
+      sources,
+      savedSourceIds,
+      useMemory = false,
+    } = body;
+
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const auth = req.headers.get("Authorization");
     if (!auth) return json(401, { success: false, error: "Unauthorized" });
@@ -37,8 +36,11 @@ serve(async (req) => {
       .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions")
       .eq("user_id", userId).maybeSingle();
 
+    const automated = useMemory === true;
     let resolvedSources: SourceInput[] = Array.isArray(sources) ? sources : [];
+
     if (Array.isArray(savedSourceIds) && savedSourceIds.length) {
+      // Explicit picks are intentional context; automated runs use the same lookup.
       const { data: saved } = await supabase
         .from("content_sources")
         .select("id, source_type, value")
@@ -51,7 +53,7 @@ serve(async (req) => {
       }
     }
 
-    if (!resolvedSources.length) {
+    if (automated && !resolvedSources.length) {
       const { data: enabled } = await supabase
         .from("content_sources")
         .select("source_type, value")
@@ -66,72 +68,41 @@ serve(async (req) => {
     }
 
     const promptText = typeof prompt === "string" ? prompt.trim() : "";
-    const includeX = wantsXPost(promptText);
-    const langCode = detectLanguageOverride(promptText) || String(language || "fr");
-    const langName = LANG_NAMES[langCode] || LANG_NAMES.fr;
-
     let sourceContext = "";
     let sourceProvider: "firecrawl" | "open" = "open";
-    let queryCount = 0;
     let researchUrls: string[] = [];
 
-    if (mode !== "improve" && (marketBrief || resolvedSources.length || promptText.length > 12)) {
-      if (detectMarketBrief(promptText)) {
-        const brief = await gatherMarketBriefContext({
-          prompt: promptText,
-          sources: resolvedSources,
-          firecrawlKey: s?.firecrawl_api_key,
-        });
-        sourceContext = brief.context;
-        sourceProvider = brief.provider;
-        queryCount = brief.queryCount;
-        researchUrls = brief.freshUrls;
-      } else {
-        const planned = resolvedSources.length
-          ? resolvedSources
-          : [{ type: "keyword" as const, value: promptText.slice(0, 180) }];
-        const gathered = await gatherSourceContext(planned, { firecrawlKey: s?.firecrawl_api_key });
-        sourceContext = gathered.context;
-        sourceProvider = gathered.provider;
-        researchUrls = gathered.freshUrls;
-      }
+    if (mode !== "improve" && resolvedSources.length) {
+      const gathered = await gatherSourceContext(resolvedSources, { firecrawlKey: s?.firecrawl_api_key });
+      sourceContext = gathered.context;
+      sourceProvider = gathered.provider;
+      researchUrls = gathered.freshUrls;
     }
 
     const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s);
+    const hasResearch = sourceContext.trim().length > 40;
+    const tone = automated && s?.tone_instructions?.trim() ? s.tone_instructions.trim() : "";
 
-    const hasResearch = sourceContext.trim().length > 80;
-    const sys = detectMarketBrief(promptText)
-      ? `${marketBriefSystemPrompt(langName, hasResearch, includeX)}
-${s?.tone_instructions ? `\nExtra brand voice from settings (do not override figure rules):\n${s.tone_instructions}` : ""}`
-      : `You write engaging LinkedIn posts in the user's voice.
-LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}.
-Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
-${s?.tone_instructions ? `User tone:\n${s.tone_instructions}` : ""}
-${hasResearch
-  ? "You HAVE live web research. Ground claims in it. Do not invent figures."
-  : "No live web research. Do not invent live prices."}
-${includeX ? "Also fill x_post (≤280 chars)." : "Set x_post to empty string."}
-Return JSON via the write_post tool.`;
+    const sys = `Follow the user's instructions exactly. Write the LinkedIn post they asked for.
+Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them.
+Return JSON via the write_post tool (title + content).
+${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}
+${hasResearch ? "Optional reference material is provided below — use it only if it helps satisfy the user request." : ""}`;
 
     const sourceBlock = hasResearch
-      ? `\n\n=== RESEARCH (Tier-1 preferred; use only these facts for numbers) ===\n${sourceContext.substring(0, 20000)}\n=== END RESEARCH ===`
-      : "\n\n(No research snippets retrieved.)";
+      ? `\n\n--- Reference material ---\n${sourceContext.substring(0, 20000)}\n--- End ---`
+      : "";
 
     let userMsg: unknown;
     if (mode === "improve" && currentText) {
-      userMsg = `Rewrite and polish this draft into a great LinkedIn post:\n\n${currentText}\n\n${promptText ? `Extra instructions: ${promptText}` : ""}${sourceBlock}`;
+      userMsg = `Improve this LinkedIn draft according to the instructions.\n\nDraft:\n${currentText}\n\nInstructions: ${promptText || "Polish clarity and flow."}${sourceBlock}`;
     } else if (imageUrl) {
       userMsg = [
-        { type: "text", text: `Write a LinkedIn post about this image. ${promptText || ""}${sourceBlock}` },
+        { type: "text", text: `${promptText || "Write a LinkedIn post about this image."}${sourceBlock}` },
         { type: "image_url", image_url: { url: imageUrl } },
       ];
     } else {
-      userMsg = `${promptText || "Write a thought-provoking LinkedIn post on a topic relevant to my industry."}${sourceBlock}
-
-Deliver:
-- LinkedIn post as specified
-${includeX ? "- X/Twitter version ≤280 characters" : ""}
-- verify_before_publish: checklist of items the human must confirm before publishing (sources, timestamps, settlement vs intraday)`;
+      userMsg = `${promptText || "Write a LinkedIn post."}${sourceBlock}`;
     }
 
     const res = await fetch(url, {
@@ -144,21 +115,14 @@ ${includeX ? "- X/Twitter version ≤280 characters" : ""}
           type: "function",
           function: {
             name: "write_post",
-            description: "Write a LinkedIn market post (and optional X post) grounded in research",
+            description: "Return the LinkedIn post",
             parameters: {
               type: "object",
               properties: {
-                title: { type: "string", description: "Short internal title (≤80 chars)" },
-                content: { type: "string", description: "Full LinkedIn post body with sources line and hashtags" },
-                x_post: { type: "string", description: "Optional X/Twitter post ≤280 chars, or empty" },
-                sources_line: { type: "string", description: "Compact sources attribution line" },
-                verify_before_publish: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Checklist of facts/timestamps the human should verify before publishing",
-                },
+                title: { type: "string", description: "Short internal title" },
+                content: { type: "string", description: "Full LinkedIn post body as requested" },
               },
-              required: ["title", "content", "x_post", "sources_line", "verify_before_publish"],
+              required: ["title", "content"],
               additionalProperties: false,
             },
           },
@@ -182,16 +146,11 @@ ${includeX ? "- X/Twitter version ≤280 characters" : ""}
       success: true,
       title: out.title,
       content: out.content,
-      x_post: out.x_post || "",
-      sources_line: out.sources_line || "",
-      verify_before_publish: Array.isArray(out.verify_before_publish) ? out.verify_before_publish : [],
       usedSources: resolvedSources.length,
       sourceProvider,
       hadWebContext: hasResearch,
-      queryCount,
       researchUrlCount: researchUrls.length,
-      languageUsed: langCode,
-      marketBrief: detectMarketBrief(promptText),
+      usedMemory: automated,
     });
   } catch (e) {
     console.error("compose-text error", e);

@@ -17,7 +17,17 @@ import {
   Save, Loader2, RefreshCw, Link as LinkIcon, CheckCircle, XCircle,
   AlertTriangle, Plus, Trash2, Globe, Hash, Linkedin, BookMarked, Sparkles, KeyRound, Copy, Check, Building2, Clock,
 } from "lucide-react";
-import { POST_MODELS, IMAGE_MODELS, type AiModel } from "@/lib/ai-models";
+import {
+  AI_PROVIDERS,
+  POST_MODELS,
+  IMAGE_MODELS,
+  providerFromModel,
+  modelsForProvider,
+  defaultPostModel,
+  defaultImageModel,
+  type AiModel,
+  type AiProviderId,
+} from "@/lib/ai-models";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 import { useLinkedInTargets, targetHealth, HEALTH_META } from "@/hooks/useLinkedInTargets";
 
@@ -58,26 +68,6 @@ type UserSettings = {
 const SAFE_SETTINGS_COLUMNS =
   "user_id, linkedin_client_id, linkedin_organization_id, linkedin_person_urn, linkedin_token_expires_at, post_model, image_model, use_byok, tone_instructions, created_at, updated_at, has_linkedin_client_secret, has_openai_api_key, has_gemini_api_key, has_anthropic_api_key, has_mistral_api_key, has_groq_api_key, has_deepseek_api_key, has_xai_api_key, has_perplexity_api_key, has_openrouter_api_key, has_firecrawl_api_key";
 
-type ByokProvider = {
-  field: keyof UserSettings;
-  label: string;
-  placeholder: string;
-  url: string;
-  hint: string;
-};
-
-const TEXT_PROVIDERS: ByokProvider[] = [
-  { field: "openai_api_key", label: "OpenAI", placeholder: "sk-...", url: "https://platform.openai.com/api-keys", hint: "GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-5.2." },
-  { field: "gemini_api_key", label: "Google Gemini", placeholder: "AIza...", url: "https://aistudio.google.com/app/apikey", hint: "Tous Gemini texte + image (2.5/3.x, Nano Banana 1 & 2, Gemini 3 Pro Image)." },
-  { field: "anthropic_api_key", label: "Anthropic Claude", placeholder: "sk-ant-...", url: "https://console.anthropic.com/settings/keys", hint: "Claude Opus, Sonnet, Haiku." },
-  { field: "mistral_api_key", label: "Mistral AI", placeholder: "...", url: "https://console.mistral.ai/api-keys", hint: "Mistral Large, Medium, Small, Codestral." },
-  { field: "groq_api_key", label: "Groq", placeholder: "gsk_...", url: "https://console.groq.com/keys", hint: "Llama 3.x, Mixtral — inférence ultra-rapide." },
-  { field: "deepseek_api_key", label: "DeepSeek", placeholder: "sk-...", url: "https://platform.deepseek.com/api_keys", hint: "DeepSeek V3, R1 reasoning." },
-  { field: "xai_api_key", label: "xAI Grok", placeholder: "xai-...", url: "https://console.x.ai/", hint: "Modèles Grok pour les posts. Facturation sur ton compte xAI." },
-  { field: "perplexity_api_key", label: "Perplexity", placeholder: "pplx-...", url: "https://www.perplexity.ai/settings/api", hint: "Sonar (LLM avec recherche intégrée)." },
-  { field: "openrouter_api_key", label: "OpenRouter", placeholder: "sk-or-...", url: "https://openrouter.ai/keys", hint: "Routeur unifié vers 200+ modèles (Llama, Qwen, Cohere…)." },
-];
-
 const LS_KEY = (uid: string) => `linkedin_app_draft_${uid}`;
 const LINKEDIN_OAUTH_STATE_KEY = "linkedin_oauth_state";
 
@@ -87,13 +77,14 @@ const Settings = () => {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [s, setS] = useState<UserSettings | null>(null);
+  const [aiProvider, setAiProvider] = useState<AiProviderId>("gemini");
   const [isConnecting, setIsConnecting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [withPages, setWithPages] = useState(true);
   const { targets } = useLinkedInTargets();
   const grokModels = useQuery({
     queryKey: ["grok-models", user?.id, s?.has_xai_api_key],
-    enabled: !!user && !!s?.has_xai_api_key,
+    enabled: !!user && !!s?.has_xai_api_key && aiProvider === "xai",
     retry: false,
     staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<{ text: AiModel[]; image: AiModel[]; textError?: string; imageError?: string }> => {
@@ -118,26 +109,42 @@ const Settings = () => {
         } catch { /* Keep the safe fallback. */ }
         throw new Error(message);
       }
-      const normalize = (models: { value: string; label: string }[] = []): AiModel[] => models.map((model) => ({ ...model, provider: "xai" }));
+      const normalize = (models: { value: string; label: string }[] = []): AiModel[] => models.map((model) => ({ ...model, provider: "xai" as const }));
       return { text: normalize(data.models), image: normalize(data.imageModels), textError: data.textError, imageError: data.imageError };
     },
   });
-  const postModels = [...POST_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.text?.length ? grokModels.data.text : POST_MODELS.filter((m) => m.provider === "xai"))];
-  const imageModels = [...IMAGE_MODELS.filter((m) => m.provider !== "xai"), ...(grokModels.data?.image?.length ? grokModels.data.image : IMAGE_MODELS.filter((m) => m.provider === "xai"))];
-  if (s?.image_model && !imageModels.some((m) => m.value === s.image_model)) {
-    imageModels.push({
-      value: s.image_model,
-      label: s.image_model,
-      provider: s.image_model.startsWith("xai/") ? "xai" : s.image_model.startsWith("openai/") ? "openai" : "gemini",
-    });
+
+  const allPostModels = [
+    ...POST_MODELS.filter((m) => m.provider !== "xai"),
+    ...(grokModels.data?.text?.length ? grokModels.data.text : POST_MODELS.filter((m) => m.provider === "xai")),
+  ];
+  const allImageModels = [
+    ...IMAGE_MODELS.filter((m) => m.provider !== "xai"),
+    ...(grokModels.data?.image?.length ? grokModels.data.image : IMAGE_MODELS.filter((m) => m.provider === "xai")),
+  ];
+  const postModels = modelsForProvider(allPostModels, aiProvider);
+  const imageModels = modelsForProvider(allImageModels, aiProvider);
+  if (s?.post_model && providerFromModel(s.post_model) === aiProvider && !postModels.some((m) => m.value === s.post_model)) {
+    postModels.push({ value: s.post_model, label: s.post_model, provider: aiProvider });
   }
-  if (s?.post_model && !postModels.some((m) => m.value === s.post_model)) {
-    postModels.push({
-      value: s.post_model,
-      label: s.post_model,
-      provider: s.post_model.startsWith("xai/") ? "xai" : s.post_model.startsWith("openai/") ? "openai" : "gemini",
-    });
+  if (s?.image_model && providerFromModel(s.image_model) === aiProvider && !imageModels.some((m) => m.value === s.image_model)) {
+    imageModels.push({ value: s.image_model, label: s.image_model, provider: aiProvider });
   }
+
+  const selectedProviderMeta = AI_PROVIDERS.find((p) => p.id === aiProvider)!;
+
+  const selectProvider = (provider: AiProviderId) => {
+    setAiProvider(provider);
+    if (!s) return;
+    const nextPost = defaultPostModel(provider);
+    const nextImage = defaultImageModel(provider);
+    setS({
+      ...s,
+      post_model: nextPost,
+      ...(nextImage ? { image_model: nextImage } : {}),
+      use_byok: true,
+    });
+  };
 
   const setDefaultTarget = useMutation({
     mutationFn: async (id: string) => {
@@ -239,6 +246,7 @@ const Settings = () => {
           };
         }
       } catch { /* ignore */ }
+      setAiProvider(providerFromModel(base?.post_model));
       setS({ ...base, linkedin_client_secret: "", openai_api_key: "", gemini_api_key: "", anthropic_api_key: "", mistral_api_key: "", groq_api_key: "", deepseek_api_key: "", xai_api_key: "", perplexity_api_key: "", openrouter_api_key: "", firecrawl_api_key: "" });
       return base;
     },
@@ -342,7 +350,7 @@ const Settings = () => {
     if (!session) {
       toast({
         title: "Connexion requise",
-        description: "Tu dois être connecté à ton compte CommoHedge avant de lier LinkedIn.",
+        description: "Tu dois être connecté avant de lier LinkedIn.",
         variant: "destructive",
       });
       navigate("/auth", { state: { linkedinAuthRequired: true, message: "Connecte-toi à ton compte avant de lier LinkedIn." } });
@@ -364,7 +372,7 @@ const Settings = () => {
         if (body?.error === "NOT_AUTHENTICATED") {
           toast({
             title: "Connexion requise",
-            description: body.message || "Connecte-toi à ton compte CommoHedge avant de lier LinkedIn.",
+            description: body.message || "Connecte-toi avant de lier LinkedIn.",
             variant: "destructive",
           });
           navigate("/auth", { state: { linkedinAuthRequired: true, message: body.message } });
@@ -619,7 +627,7 @@ const Settings = () => {
       <Card id="sources" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
         <CardHeader>
           <CardTitle>Sources de contenu</CardTitle>
-          <CardDescription>URLs et mots-clés utilisés comme inspiration pour générer tes posts.</CardDescription>
+          <CardDescription>Mémoire pour l’automatisation (planning / file d’attente). Les générations manuelles suivent uniquement le prompt (sauf sources explicitement cochées dans le Composer).</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-2">
@@ -660,22 +668,52 @@ const Settings = () => {
       {/* AI Models */}
       <Card id="ai-models" className="border-border/50 bg-card/60 backdrop-blur-xl scroll-mt-6">
         <CardHeader>
-          <CardTitle>Modèles IA</CardTitle>
-          <CardDescription>Choisis quel modèle utiliser par fonctionnalité.</CardDescription>
+          <CardTitle>IA & clés API</CardTitle>
+          <CardDescription>Fournisseur → modèle texte → modèle image. Seuls les modèles du fournisseur choisi sont listés.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1">
-            <Label>Modèle de génération de post (texte)</Label>
-            <Select value={s.post_model} onValueChange={(v) => setS({ ...s, post_model: v, use_byok: true })}>
+            <Label>1. Fournisseur</Label>
+            <Select value={aiProvider} onValueChange={(v) => selectProvider(v as AiProviderId)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {AI_PROVIDERS.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label>Clé API {selectedProviderMeta.label}</Label>
+            <Input
+              type="password"
+              autoComplete="off"
+              value={(s[selectedProviderMeta.keyField] as string | null) || ""}
+              onChange={(e) => setS({ ...s, [selectedProviderMeta.keyField]: e.target.value, use_byok: true })}
+              placeholder={s[selectedProviderMeta.hasField] ? "•••• enregistré — saisis pour remplacer" : selectedProviderMeta.placeholder}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {selectedProviderMeta.hint}{" "}
+              <a href={selectedProviderMeta.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Récupérer la clé →</a>
+            </p>
+            {!s[selectedProviderMeta.hasField] && !(s[selectedProviderMeta.keyField] as string)?.trim() && (
+              <p className="text-xs text-destructive">Clé requise pour générer avec {selectedProviderMeta.label}.</p>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <Label>2. Modèle texte (posts)</Label>
+            <Select
+              value={postModels.some((m) => m.value === s.post_model) ? s.post_model : postModels[0]?.value}
+              onValueChange={(v) => setS({ ...s, post_model: v, use_byok: true })}
+            >
+              <SelectTrigger><SelectValue placeholder="Choisir un modèle" /></SelectTrigger>
               <SelectContent>
                 {postModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
               </SelectContent>
             </Select>
-            {s.post_model.startsWith("xai/") && !s.has_xai_api_key && (
-              <p className="text-xs text-destructive">Clé API xAI requise : renseigne-la ci-dessous puis enregistre les paramètres.</p>
-            )}
-            {s.has_xai_api_key && (
+            {aiProvider === "xai" && s.has_xai_api_key && (
               <div className="flex items-center gap-2">
                 <Button type="button" variant="ghost" size="sm" disabled={grokModels.isFetching} onClick={() => grokModels.refetch()}>
                   {grokModels.isFetching ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
@@ -686,23 +724,33 @@ const Settings = () => {
               </div>
             )}
           </div>
+
           <div className="space-y-1">
-            <Label>Modèle de génération d'image</Label>
-            <Select value={s.image_model} onValueChange={(v) => setS({ ...s, image_model: v, use_byok: true })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {imageModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
-              </SelectContent>
-            </Select>
-            {s.image_model.startsWith("xai/") && !s.has_xai_api_key && <p className="text-xs text-destructive">Clé API xAI requise pour les images Grok.</p>}
-            {grokModels.data?.imageError && <p role="alert" className="text-xs text-destructive">{grokModels.data.imageError}</p>}
+            <Label>3. Modèle image</Label>
+            {imageModels.length ? (
+              <Select
+                value={imageModels.some((m) => m.value === s.image_model) ? s.image_model : imageModels[0]?.value}
+                onValueChange={(v) => setS({ ...s, image_model: v, use_byok: true })}
+              >
+                <SelectTrigger><SelectValue placeholder="Choisir un modèle" /></SelectTrigger>
+                <SelectContent>
+                  {imageModels.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-xs text-muted-foreground">Aucun modèle image pour OpenAI dans l’app — choisis Gemini ou xAI pour les images.</p>
+            )}
+            {grokModels.data?.imageError && aiProvider === "xai" && (
+              <p role="alert" className="text-xs text-destructive">{grokModels.data.imageError}</p>
+            )}
           </div>
+
           <div className="space-y-1">
-            <Label>Ton & instructions (optionnel)</Label>
+            <Label>Mémoire / ton (automatisation seulement)</Label>
             <Textarea
               value={s.tone_instructions || ""}
               onChange={(e) => setS({ ...s, tone_instructions: e.target.value })}
-              placeholder="Ex : professionnel, incisif, orienté fondateurs SaaS B2B. Termine toujours par une question."
+              placeholder="Utilisé uniquement pour les posts planifiés / file d’attente. Les générations manuelles suivent uniquement ton prompt."
               rows={3}
             />
           </div>
@@ -710,51 +758,19 @@ const Settings = () => {
           <div className="flex items-center justify-between pt-2 border-t">
             <div>
               <Label>Utilise tes propres clés API (BYOK)</Label>
-              <p className="text-xs text-muted-foreground">Obligatoire : l’app appelle directement OpenAI, Gemini ou xAI avec tes clés. Tu ne paies que ce que tu consommes chez chaque fournisseur.</p>
+              <p className="text-xs text-muted-foreground">L’app appelle directement le fournisseur choisi avec ta clé.</p>
             </div>
             <Switch checked={s.use_byok} onCheckedChange={(v) => setS({ ...s, use_byok: v })} />
           </div>
-          {s.use_byok && (
-            <div className="space-y-4 pl-4 border-l-2 border-primary/30">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Modèles IA (texte & image)</p>
-                <div className="space-y-3">
-                  {TEXT_PROVIDERS.map((p) => (
-                    <div key={p.field as string} className="space-y-1">
-                      <Label>Clé API {p.label}</Label>
-                      <Input
-                        type="password"
-                        autoComplete="off"
-                        value={(s[p.field] as string | null) || ""}
-                        onChange={(e) => setS({ ...s, [p.field]: e.target.value } as UserSettings)}
-                        placeholder={(s as Record<string, unknown>)[`has_${p.field}`] ? "•••• enregistré — saisis pour remplacer" : p.placeholder}
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        {p.hint}{" "}
-                        <a href={p.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Récupérer la clé →</a>
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
 
-              <div className="pt-3 border-t">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Sources de contenu (scraping & recherche)</p>
-                <div className="space-y-1">
-                  <Label>Clé API Firecrawl (optionnelle)</Label>
-                  <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-... (optionnel)"} />
-                  <p className="text-[11px] text-muted-foreground">
-                    Optionnelle. Sans clé, l’app utilise des sources ouvertes (Jina Reader + Google News RSS / DuckDuckGo) pour scraper et rechercher.{" "}
-                    <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Firecrawl →</a>
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-md bg-muted/50 p-3 text-[11px] text-muted-foreground">
-                💡 Grok → clé xAI · Gemini (texte/image) → clé Google · GPT → clé OpenAI. Active BYOK et enregistre la clé du fournisseur choisi.
-              </div>
-            </div>
-          )}
+          <div className="pt-2 border-t space-y-1">
+            <Label>Firecrawl (optionnel, scraping)</Label>
+            <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-... (optionnel)"} />
+            <p className="text-[11px] text-muted-foreground">
+              Sans clé : sources ouvertes (Jina + News RSS / DuckDuckGo).{" "}
+              <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Firecrawl →</a>
+            </p>
+          </div>
         </CardContent>
       </Card>
 

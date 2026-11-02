@@ -1,0 +1,1 @@
+{"name":"generate-post","entrypoint_path":"index.ts","verify_jwt":true,"fileNames":["index.ts","../_shared/ai-text.ts"],"fileCount":2}

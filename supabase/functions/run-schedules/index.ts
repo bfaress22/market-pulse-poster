@@ -52,13 +52,14 @@ async function generateText(opts: {
   prompt: string; tone: string | null; sourceCtx: string; model: string; key: string; url: string; language?: string | null;
 }): Promise<{ title: string; content: string }> {
   const langName = LANG_NAMES[String(opts.language || "fr")] || LANG_NAMES.fr;
-  const sys = `You write engaging LinkedIn posts.
-LANGUAGE: Write the entire post (title, body, hashtags, CTA) strictly in ${langName}. Never use another language, whatever the language of the sources.
-Rules: 150-300 words, 5-7 hashtags, sparing emojis, end with a CTA/question.
-${opts.tone ? `Tone:\n${opts.tone}` : ""}
+  const sys = `Follow the schedule prompt exactly. Write a LinkedIn post that matches it.
+Prefer ${langName} unless the prompt specifies another language.
+Do not add branding, hashtags, CTAs, or structure unless the prompt asks for them.
+${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}
+${opts.sourceCtx ? "Reference material is provided — use it only to satisfy the prompt." : ""}
 Return JSON via the write_post tool.`;
-  const sourceBlock = opts.sourceCtx ? `\n\nReferences (synthesize, don't copy):\n${opts.sourceCtx.substring(0, 12000)}` : "";
-  const userMsg = `${opts.prompt || "Write a thought-provoking LinkedIn post."}${sourceBlock}`;
+  const sourceBlock = opts.sourceCtx ? `\n\n--- Reference material ---\n${opts.sourceCtx.substring(0, 12000)}\n--- End ---` : "";
+  const userMsg = `${opts.prompt || "Write a LinkedIn post."}${sourceBlock}`;
 
   const res = await fetch(opts.url, {
     method: "POST",

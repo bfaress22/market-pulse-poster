@@ -64,16 +64,10 @@ serve(async (req) => {
     const langCode = (typeof language === "string" && language) || "fr";
     const langName = LANG_NAMES[langCode] ?? langCode;
 
-    const systemPrompt = `You are a professional content creator producing engaging LinkedIn posts.
-CRITICAL LANGUAGE RULE: write EVERY field (title, content, newsSummary) strictly in ${langName}. Never mix languages, never translate to English unless ${langName} is English. Hashtags must also be in ${langName}.
-Rules:
-- Tone: professional yet engaging
-- 150-300 words
-- 5-7 relevant hashtags
-- Sparingly use emojis
-- End with a CTA / question
-${settings.tone_instructions ? `\nUser instructions:\n${settings.tone_instructions}` : ""}
-
+    const systemPrompt = `Follow the user request. Produce a LinkedIn post from the provided material.
+Prefer ${langName} unless the material or request says otherwise.
+Do not add branding, hashtags, CTAs, or structure unless asked.
+${settings.tone_instructions ? `\nAutomation memory / voice:\n${settings.tone_instructions}` : ""}
 Return JSON via the create_linkedin_post tool.`;
 
     const data = await callAi(
@@ -81,7 +75,7 @@ Return JSON via the create_linkedin_post tool.`;
       settings,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Write the post in ${langName}.\n\nLatest news/inspiration:\n\n${String(newsMarkdown).substring(0, 8000)}` },
+        { role: "user", content: `Material:\n\n${String(newsMarkdown).substring(0, 8000)}` },
       ],
       [{
         type: "function",
