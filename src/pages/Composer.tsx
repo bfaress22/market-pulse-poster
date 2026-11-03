@@ -231,7 +231,14 @@ const Composer = () => {
     onSuccess: (d) => {
       setContent(d.content);
       if (!title) setTitle(d.title);
-      toast({ title: "Texte généré" });
+      toast({
+        title: d.hadWebContext ? "Texte généré (recherche web OK)" : "Texte généré",
+        description: d.hadWebContext
+          ? `${d.usedFirecrawl ? "Firecrawl" : "sources ouvertes"} · ${d.queryCount || 0} requêtes · ${d.researchUrlCount || 0} URLs`
+          : d.researchRequested
+            ? "Recherche demandée mais aucun résultat web exploitable"
+            : undefined,
+      });
     },
     onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
     onSettled: () => setBusy(null),
