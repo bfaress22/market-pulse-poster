@@ -1,0 +1,1 @@
+{"name":"compose-text","entrypoint_path":"index.ts","verify_jwt":false,"files":[{"name":"index.ts","len":11761},{"name":"../_shared/ai-text.ts","len":3376},{"name":"../_shared/web-sources.ts","len":9349}]}

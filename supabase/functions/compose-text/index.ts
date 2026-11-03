@@ -1,6 +1,5 @@
-// On-demand LinkedIn text: follow the user prompt directly.
-// Memory (tone + enabled sources) only when useMemory=true (automation).
-// Web research ALWAYS runs on create (Firecrawl if key present, else open fallbacks).
+// On-demand LinkedIn text: follow the user prompt.
+// Web research always runs on create, with a hard time budget so the function never hangs.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
@@ -9,8 +8,10 @@ import { gatherSourceContext, scrapeUrl, type SourceInput } from "../_shared/web
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const json = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+const json = (s: number, b: unknown) =>
+  new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const SITE_ALIASES: Record<string, string> = {
   reuters: "reuters.com",
@@ -19,10 +20,7 @@ const SITE_ALIASES: Record<string, string> = {
   "financial times": "ft.com",
   ft: "ft.com",
   wsj: "wsj.com",
-  "wall street journal": "wsj.com",
   eia: "eia.gov",
-  investing: "investing.com",
-  "trading economics": "tradingeconomics.com",
 };
 
 function extractPreferredSites(prompt: string): string[] {
@@ -31,13 +29,12 @@ function extractPreferredSites(prompt: string): string[] {
   for (const [alias, host] of Object.entries(SITE_ALIASES)) {
     if (lower.includes(alias)) sites.add(host);
   }
-  if (/sources?\s+fiables|reliable\s+sources|tier[- ]?1|bourses?/i.test(prompt)) {
-    for (const host of ["reuters.com", "bloomberg.com", "cnbc.com", "ft.com", "eia.gov"]) sites.add(host);
+  if (/sources?\s+fiables|reliable\s+sources|bourses?/i.test(prompt)) {
+    for (const host of ["reuters.com", "bloomberg.com", "cnbc.com", "eia.gov"]) sites.add(host);
   }
   return [...sites];
 }
 
-/** Build focused keyword searches from the user prompt. */
 function buildResearchKeywords(prompt: string): SourceInput[] {
   const sites = extractPreferredSites(prompt);
   const siteFilter = sites.length ? `(${sites.map((s) => `site:${s}`).join(" OR ")})` : "";
@@ -49,23 +46,18 @@ function buildResearchKeywords(prompt: string): SourceInput[] {
     .replace(/write\s+a\s+(linkedin\s+)?post[\s\S]*$/i, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 160);
+    .slice(0, 120);
 
-  if (!topic) topic = prompt.replace(/\s+/g, " ").trim().slice(0, 140);
+  if (!topic) topic = prompt.replace(/\s+/g, " ").trim().slice(0, 100);
 
   const queries: string[] = [];
   if (topic) queries.push(siteFilter ? `${topic} ${siteFilter}` : topic);
 
-  if (/commodit|marché|market|oil|brent|wti|gas|gold|copper|wheat|metals?/i.test(prompt)) {
+  if (/commodit|marché|market|oil|brent|wti|gas|gold|copper|wheat/i.test(prompt)) {
     queries.push(
       siteFilter
-        ? `commodity market movers today prices settlements ${siteFilter}`
-        : "commodity market movers today oil gas gold copper wheat prices",
-    );
-    queries.push(
-      siteFilter
-        ? `Brent WTI TTF gold copper wheat settlement today ${siteFilter}`
-        : "Brent WTI natural gas gold copper wheat price today",
+        ? `commodity market movers today prices ${siteFilter}`
+        : "commodity market movers today oil gas gold copper wheat",
     );
   }
 
@@ -75,8 +67,8 @@ function buildResearchKeywords(prompt: string): SourceInput[] {
     const key = q.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ type: "keyword", value: q.slice(0, 220) });
-    if (out.length >= 6) break;
+    out.push({ type: "keyword", value: q.slice(0, 180) });
+    if (out.length >= 3) break;
   }
   return out;
 }
@@ -84,7 +76,7 @@ function buildResearchKeywords(prompt: string): SourceInput[] {
 async function scrapeTopArticles(
   urls: string[],
   firecrawlKey?: string | null,
-  limit = 6,
+  limit = 2,
 ): Promise<string> {
   const unique = [...new Set(urls)]
     .filter((u) => /^https?:\/\//i.test(u))
@@ -93,16 +85,20 @@ async function scrapeTopArticles(
 
   const chunks: string[] = [];
   await Promise.all(unique.map(async (url) => {
-    const md = await scrapeUrl(url, firecrawlKey);
-    if (md && md.length > 120) {
-      chunks.push(`# Article extract: ${url}\n\n${md.substring(0, 2800)}`);
-    }
+    try {
+      const md = await scrapeUrl(url, firecrawlKey);
+      if (md && md.length > 120) chunks.push(`# Article: ${url}\n\n${md.substring(0, 2000)}`);
+    } catch { /* ignore */ }
   }));
   return chunks.join("\n\n---\n\n");
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // CORS must always answer instantly — never do research on OPTIONS.
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   try {
     const body = await req.json();
     const {
@@ -148,7 +144,7 @@ serve(async (req) => {
         .select("source_type, value")
         .eq("user_id", userId)
         .eq("enabled", true)
-        .limit(8);
+        .limit(6);
       for (const r of enabled || []) {
         if (r.source_type === "url" || r.source_type === "keyword" || r.source_type === "idea") {
           resolvedSources.push({ type: r.source_type as SourceInput["type"], value: r.value });
@@ -158,12 +154,9 @@ serve(async (req) => {
 
     const promptText = typeof prompt === "string" ? prompt.trim() : "";
 
-    // ALWAYS research on create when we have a prompt: Firecrawl if key exists, else open sources.
     if (mode !== "improve" && promptText.length >= 8) {
       const hasExplicit = resolvedSources.some((x) => x.type === "url" || x.type === "keyword");
-      if (!hasExplicit) {
-        resolvedSources = [...resolvedSources, ...buildResearchKeywords(promptText)];
-      }
+      if (!hasExplicit) resolvedSources = [...resolvedSources, ...buildResearchKeywords(promptText)];
     }
 
     let sourceContext = "";
@@ -175,28 +168,39 @@ serve(async (req) => {
     if (mode !== "improve" && resolvedSources.length) {
       queryCount = resolvedSources.filter((x) => x.type === "keyword").length;
       console.log("compose-text research start", {
-        userId,
         queries: queryCount,
-        hasFirecrawlKey: !!(s?.firecrawl_api_key && String(s.firecrawl_api_key).trim()),
-        promptLen: promptText.length,
+        hasFirecrawl: !!(s?.firecrawl_api_key && String(s.firecrawl_api_key).trim()),
       });
 
-      const gathered = await gatherSourceContext(resolvedSources, {
-        firecrawlKey: s?.firecrawl_api_key,
-        maxUrls: 6,
-        maxKeywords: 6,
-        urlSnippetChars: 2500,
-      });
-      sourceContext = gathered.context;
-      sourceProvider = gathered.provider;
-      researchUrls = gathered.freshUrls;
-      hitCount = gathered.hitCount;
+      try {
+        const gathered = await Promise.race([
+          gatherSourceContext(resolvedSources, {
+            firecrawlKey: s?.firecrawl_api_key,
+            maxUrls: 3,
+            maxKeywords: 3,
+            urlSnippetChars: 1800,
+            budgetMs: 12000,
+          }),
+          new Promise<{ context: string; freshUrls: string[]; provider: "firecrawl" | "open"; hitCount: number }>((resolve) =>
+            setTimeout(() => resolve({ context: "", freshUrls: [], provider: s?.firecrawl_api_key ? "firecrawl" : "open", hitCount: 0 }), 14000)
+          ),
+        ]);
+        sourceContext = gathered.context;
+        sourceProvider = gathered.provider;
+        researchUrls = gathered.freshUrls;
+        hitCount = gathered.hitCount;
 
-      if (researchUrls.length) {
-        const articles = await scrapeTopArticles(researchUrls, s?.firecrawl_api_key, 6);
-        if (articles) {
-          sourceContext = [sourceContext, articles].filter(Boolean).join("\n\n---\n\n").substring(0, 28000);
+        if (researchUrls.length && sourceContext.length < 4000) {
+          const articles = await Promise.race([
+            scrapeTopArticles(researchUrls, s?.firecrawl_api_key, 2),
+            new Promise<string>((resolve) => setTimeout(() => resolve(""), 8000)),
+          ]);
+          if (articles) {
+            sourceContext = [sourceContext, articles].filter(Boolean).join("\n\n---\n\n").substring(0, 18000);
+          }
         }
+      } catch (e) {
+        console.warn("compose-text research error", e);
       }
 
       console.log("compose-text research done", {
@@ -216,11 +220,11 @@ Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless t
 Return JSON via the write_post tool (title + content).
 ${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}
 ${hasResearch
-  ? "WEB RESEARCH IS ATTACHED below. Ground every figure, %, price, and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent."
+  ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent."
   : "Web research returned no usable snippets. Say briefly that live figures were unavailable. Do not invent prices or moves."}`;
 
     const sourceBlock = hasResearch
-      ? `\n\n--- Web research (use for facts/figures only) ---\n${sourceContext.substring(0, 22000)}\n--- End research ---`
+      ? `\n\n--- Web research (use for facts/figures only) ---\n${sourceContext.substring(0, 16000)}\n--- End research ---`
       : "";
 
     let userMsg: unknown;
