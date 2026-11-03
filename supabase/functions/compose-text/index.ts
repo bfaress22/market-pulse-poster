@@ -3,7 +3,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { resolveProjectFirecrawlKey } from "../_shared/firecrawl.ts";
 import { gatherSourceContext, scrapeUrl, type SourceInput } from "../_shared/web-sources.ts";
+import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -119,7 +121,7 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions, active_skill")
       .eq("user_id", userId).maybeSingle();
 
     const automated = useMemory === true;
@@ -167,22 +169,24 @@ serve(async (req) => {
 
     if (mode !== "improve" && resolvedSources.length) {
       queryCount = resolvedSources.filter((x) => x.type === "keyword").length;
+      const firecrawlKey = await resolveProjectFirecrawlKey(supabase, s?.firecrawl_api_key);
+
       console.log("compose-text research start", {
         queries: queryCount,
-        hasFirecrawl: !!(s?.firecrawl_api_key && String(s.firecrawl_api_key).trim()),
+        hasFirecrawl: !!firecrawlKey,
       });
 
       try {
         const gathered = await Promise.race([
           gatherSourceContext(resolvedSources, {
-            firecrawlKey: s?.firecrawl_api_key,
+            firecrawlKey,
             maxUrls: 3,
             maxKeywords: 3,
             urlSnippetChars: 1800,
             budgetMs: 12000,
           }),
           new Promise<{ context: string; freshUrls: string[]; provider: "firecrawl" | "open"; hitCount: number }>((resolve) =>
-            setTimeout(() => resolve({ context: "", freshUrls: [], provider: s?.firecrawl_api_key ? "firecrawl" : "open", hitCount: 0 }), 14000)
+            setTimeout(() => resolve({ context: "", freshUrls: [], provider: firecrawlKey ? "firecrawl" : "open", hitCount: 0 }), 14000)
           ),
         ]);
         sourceContext = gathered.context;
@@ -192,7 +196,7 @@ serve(async (req) => {
 
         if (researchUrls.length && sourceContext.length < 4000) {
           const articles = await Promise.race([
-            scrapeTopArticles(researchUrls, s?.firecrawl_api_key, 2),
+            scrapeTopArticles(researchUrls, firecrawlKey, 2),
             new Promise<string>((resolve) => setTimeout(() => resolve(""), 8000)),
           ]);
           if (articles) {
@@ -214,11 +218,15 @@ serve(async (req) => {
     const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s);
     const hasResearch = sourceContext.trim().length > 40;
     const tone = automated && s?.tone_instructions?.trim() ? s.tone_instructions.trim() : "";
+    const skill = resolveContentSkill(s?.active_skill);
+    const skillBlock = skillTextBlock(skill);
 
     const sys = `Follow the user's instructions exactly. Write the LinkedIn post they asked for.
-Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them.
+${skill
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults)."
+  : "Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them."}
 Return JSON via the write_post tool (title + content).
-${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}
+${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}${skillBlock}
 ${hasResearch
   ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent."
   : "Web research returned no usable snippets. Say briefly that live figures were unavailable. Do not invent prices or moves."}`;

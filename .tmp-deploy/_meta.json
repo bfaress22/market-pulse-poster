@@ -1,1 +1,0 @@
-{"name":"compose-text","entrypoint_path":"index.ts","verify_jwt":true,"fileNames":["index.ts","../_shared/ai-text.ts","../_shared/web-sources.ts"]}

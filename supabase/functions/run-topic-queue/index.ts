@@ -10,6 +10,7 @@ import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueTopics, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
 import { makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
 import { jobLog } from "../_shared/logger.ts";
+import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
 
 
 const corsHeaders = {
@@ -25,13 +26,17 @@ const LANG_NAMES: Record<string, string> = {
 };
 
 async function generatePostText(opts: {
-  subject: string; language: string; tone: string | null; model: string; key: string; url: string;
+  subject: string; language: string; tone: string | null; skillSlug: string | null; model: string; key: string; url: string;
 }): Promise<{ title: string; content: string }> {
   const langName = LANG_NAMES[opts.language] || LANG_NAMES.fr;
+  const skill = resolveContentSkill(opts.skillSlug);
+  const skillBlock = skillTextBlock(skill);
   const sys = `Follow the topic exactly. Write a LinkedIn post that matches it.
-Prefer ${langName} unless the topic specifies another language.
-Do not add branding, hashtags, CTAs, or structure unless asked.
-${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}
+Prefer ${langName} unless the topic or skill specifies another language.
+${skill
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults)."
+  : "Do not add branding, hashtags, CTAs, or structure unless asked."}
+${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}${skillBlock}
 Return JSON via the write_post tool.`;
 
   const res = await fetch(opts.url, {
@@ -69,13 +74,18 @@ Return JSON via the write_post tool.`;
 async function generateImage(prompt: string, model: string | null, supabase: any, userId: string): Promise<string | null> {
   let base64: string;
   let mimeType = "image/png";
-  const fullPrompt = `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.`;
   const { data: settings, error } = await supabase
     .from("user_settings")
-    .select("use_byok, xai_api_key, gemini_api_key")
+    .select("use_byok, xai_api_key, gemini_api_key, active_skill")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error("Impossible de charger les paramètres image.");
+
+  const skill = resolveContentSkill(settings?.active_skill);
+  const brandHint = skill
+    ? ` Brand: ${skill.name}. Colors ${skill.imageBrand.background}, ${skill.imageBrand.accent}, ${skill.imageBrand.text}. ${skill.imageAddon}`
+    : "";
+  const fullPrompt = `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.${brandHint}`;
 
   if (model?.startsWith("xai/")) {
     const image = await generateXaiImage({ settings, model, prompt: fullPrompt, aspectRatio: "1:1" });
@@ -109,7 +119,7 @@ async function generateImage(prompt: string, model: string | null, supabase: any
 async function processTopic(supabase: any, topic: any) {
   const userId = topic.user_id;
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, image_model")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, image_model, active_skill")
     .eq("user_id", userId).maybeSingle();
 
   const { model, url, key } = resolveTextProvider(us?.post_model || "google/gemini-3-flash-preview", us);
@@ -118,6 +128,7 @@ async function processTopic(supabase: any, topic: any) {
     subject: topic.subject,
     language: topic.language || "fr",
     tone: us?.tone_instructions || null,
+    skillSlug: us?.active_skill || null,
     model, key, url,
   });
 

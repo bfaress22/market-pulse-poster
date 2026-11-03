@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateXaiImage } from "../_shared/xai-image.ts";
 import { generateImageRouted, mapImageError } from "../_shared/ai-image.ts";
+import { resolveContentSkill } from "../_shared/content-skills.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,8 +29,31 @@ const POSITION_LABELS: Record<string, string> = {
   "bottom-right": "bottom-right corner",
 };
 
-function buildPrompt(opts: { prompt: string }): string {
+function buildPrompt(opts: {
+  prompt: string;
+  skillAddon?: string | null;
+  colors?: string[] | null;
+  style?: string | null;
+  mood?: string | null;
+  wordmark?: { text?: string; position?: string } | null;
+  textOverlay?: { text?: string; position?: string; weight?: string; color?: string } | null;
+}): string {
   const subject = (opts.prompt || "").trim();
+  const colorLine = Array.isArray(opts.colors) && opts.colors.length
+    ? opts.colors.join(", ")
+    : "Dark navy, white, soft gray, gold accents, light blue accents";
+  const styleLine = opts.style?.trim() || "Minimalistic, elegant, corporate, editorial, professional, structured, high-end, balanced";
+  const moodLine = opts.mood?.trim() || "professional and confident";
+  const overlay = opts.textOverlay?.text?.trim()
+    ? `Text overlay (use exactly): "${opts.textOverlay.text}" at ${opts.textOverlay.position || "top-left"}, weight ${opts.textOverlay.weight || "bold"}, color ${opts.textOverlay.color || "#FFFFFF"}.`
+    : "";
+  const mark = opts.wordmark?.text?.trim()
+    ? `Wordmark (use exactly): "${opts.wordmark.text}" at ${opts.wordmark.position || "top-left"}.`
+    : "";
+  const skillBlock = opts.skillAddon?.trim()
+    ? `\n==================================================\nACTIVE BRAND SKILL\n==================================================\n${opts.skillAddon.trim()}\n`
+    : "";
+
   return `You are an award-winning Editorial Infographic Designer with over 20 years of experience creating visual reports for Bloomberg, Financial Times, Reuters, The Economist, McKinsey, BCG and Deloitte.
 
 Your mission is to transform the following professional subject into a premium editorial infographic that looks like it was designed by an experienced graphic designer.
@@ -38,7 +62,7 @@ SUBJECT / ARTICLE:
 ${subject}
 
 The infographic must NEVER look AI-generated.
-
+${skillBlock}
 ==================================================
 DESIGN OBJECTIVES
 ==================================================
@@ -56,7 +80,7 @@ NOT a marketing poster. NOT an AI artwork. NOT a fantasy illustration. NOT a soc
 ==================================================
 VISUAL STYLE
 ==================================================
-Minimalistic, elegant, corporate, editorial, professional, structured, high-end, balanced. Lots of whitespace. Perfect alignment. Strong visual hierarchy. Premium typography. Grid-based layout. Consistent spacing. Professional icons. Subtle shadows. Flat design mixed with realistic illustrations only when necessary.
+${styleLine}. Mood: ${moodLine}. Lots of whitespace. Perfect alignment. Strong visual hierarchy. Premium typography. Grid-based layout. Consistent spacing. Professional icons. Subtle shadows. Flat design mixed with realistic illustrations only when necessary.
 
 ==================================================
 LAYOUT
@@ -67,6 +91,8 @@ Always organize information into clearly separated sections. Possible structure:
 TEXT
 ==================================================
 The infographic may contain text only if provided above. NEVER invent statistics, percentages, dates, quotes, company names, institutions, economic figures, country names or political claims. If a value is unknown, replace it with a neutral placeholder or omit it entirely. Never fabricate information. Text must be perfectly readable, grammatically correct, professional, concise and consistent. No spelling mistakes, no broken words, no random characters, no gibberish.
+${overlay}
+${mark}
 
 ==================================================
 POLITICAL SAFETY
@@ -86,7 +112,7 @@ Professional. Simple. Minimal. Business style. Thin lines. Neutral colors. No fa
 ==================================================
 COLORS
 ==================================================
-Dark navy, white, soft gray, gold accents, light blue accents. Maximum 4 primary colors. High contrast. Premium appearance.
+Palette: ${colorLine}. Maximum 4 primary colors. High contrast. Premium appearance.
 
 ==================================================
 ILLUSTRATIONS
@@ -142,12 +168,31 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("image_model, use_byok, xai_api_key, gemini_api_key").eq("user_id", userId).maybeSingle();
+      .select("image_model, use_byok, xai_api_key, gemini_api_key, active_skill").eq("user_id", userId).maybeSingle();
 
     let model = requestedModel || s?.image_model || "google/gemini-3.1-flash-image-preview";
     if (!/^xai\/[a-zA-Z0-9._-]+$/.test(model) && !ALLOWED_MODELS.includes(model)) model = "google/gemini-3.1-flash-image-preview";
 
-    const fullPrompt = buildPrompt({ prompt });
+    const skill = resolveContentSkill(s?.active_skill);
+    const brandColors = skill
+      ? [skill.imageBrand.background, skill.imageBrand.accent, skill.imageBrand.text, skill.imageBrand.secondary]
+      : null;
+    const mergedColors = Array.isArray(colors) && colors.length ? colors : brandColors;
+    const mergedWordmark = wordmark?.text
+      ? wordmark
+      : skill
+        ? { text: skill.imageBrand.wordmark, position: "top-left" }
+        : null;
+
+    const fullPrompt = buildPrompt({
+      prompt,
+      skillAddon: skill?.imageAddon,
+      colors: mergedColors,
+      style,
+      mood,
+      wordmark: mergedWordmark,
+      textOverlay,
+    });
     let base64: string;
     let mimeType = "image/png";
     if (model.startsWith("xai/")) {

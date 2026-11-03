@@ -4,12 +4,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { generateXaiImage } from "../_shared/xai-image.ts";
 import { generateImageRouted, mapImageError } from "../_shared/ai-image.ts";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { resolveProjectFirecrawlKey } from "../_shared/firecrawl.ts";
 import { gatherSourceContext, type SourceInput } from "../_shared/web-sources.ts";
 import { resolveTargets, publishLinkedInPost } from "../_shared/linkedin.ts";
 import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueSchedules, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
 import { computeNextRun, makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
 import { jobLog } from "../_shared/logger.ts";
+import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
 
 
 const corsHeaders = {
@@ -49,14 +51,18 @@ const LANG_NAMES: Record<string, string> = {
 };
 
 async function generateText(opts: {
-  prompt: string; tone: string | null; sourceCtx: string; model: string; key: string; url: string; language?: string | null;
+  prompt: string; tone: string | null; skillSlug: string | null; sourceCtx: string; model: string; key: string; url: string; language?: string | null;
 }): Promise<{ title: string; content: string }> {
   const langName = LANG_NAMES[String(opts.language || "fr")] || LANG_NAMES.fr;
+  const skill = resolveContentSkill(opts.skillSlug);
+  const skillBlock = skillTextBlock(skill);
   const sys = `Follow the schedule prompt exactly. Write a LinkedIn post that matches it.
-Prefer ${langName} unless the prompt specifies another language.
-Do not add branding, hashtags, CTAs, or structure unless the prompt asks for them.
-${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}
-${opts.sourceCtx ? "Reference material is provided — use it only to satisfy the prompt." : ""}
+Prefer ${langName} unless the prompt or skill specifies another language.
+${skill
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults)."
+  : "Do not add branding, hashtags, CTAs, or structure unless the prompt asks for them."}
+${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}${skillBlock}
+${opts.sourceCtx ? "Reference material is provided — use it only to satisfy the prompt (and skill hard rules)." : ""}
 Return JSON via the write_post tool.`;
   const sourceBlock = opts.sourceCtx ? `\n\n--- Reference material ---\n${opts.sourceCtx.substring(0, 12000)}\n--- End ---` : "";
   const userMsg = `${opts.prompt || "Write a LinkedIn post."}${sourceBlock}`;
@@ -95,15 +101,20 @@ Return JSON via the write_post tool.`;
 
 // ===== AI image =====
 async function generateImage(prompt: string, model: string, supabase: any, userId: string): Promise<string | null> {
-  const fullPrompt = `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.`;
   let base64: string;
   let mimeType = "image/png";
   const { data: settings, error } = await supabase
     .from("user_settings")
-    .select("use_byok, xai_api_key, gemini_api_key")
+    .select("use_byok, xai_api_key, gemini_api_key, active_skill")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error("Impossible de charger les paramètres image.");
+
+  const skill = resolveContentSkill(settings?.active_skill);
+  const brandHint = skill
+    ? ` Brand: ${skill.name}. Colors ${skill.imageBrand.background}, ${skill.imageBrand.accent}, ${skill.imageBrand.text}. ${skill.imageAddon}`
+    : "";
+  const fullPrompt = `Create a professional LinkedIn post image. Subject: ${prompt}. Style: modern editorial, clean composition, premium feel.${brandHint}`;
 
   if (model?.startsWith("xai/")) {
     const image = await generateXaiImage({ settings, model, prompt: fullPrompt, aspectRatio: "1:1" });
@@ -160,10 +171,11 @@ async function processSchedule(supabase: any, sched: any) {
 
   // AI + scrape keys
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions, image_model")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions, image_model, active_skill")
     .eq("user_id", userId).maybeSingle();
 
-  const { context: sourceCtx, freshUrls } = await gatherSources(sources, usedUrlSet, us?.firecrawl_api_key);
+  const firecrawlKey = await resolveProjectFirecrawlKey(supabase, us?.firecrawl_api_key);
+  const { context: sourceCtx, freshUrls } = await gatherSources(sources, usedUrlSet, firecrawlKey);
   const { model, url, key } = resolveTextProvider(sched.ai_model || us?.post_model || "google/gemini-3-flash-preview", us);
 
   // Try up to 2 generations to avoid duplicate
@@ -171,7 +183,7 @@ async function processSchedule(supabase: any, sched: any) {
   while (attempt < 2) {
     attempt++;
     const g = await generateText({
-      prompt: sched.prompt, tone: sched.tone_instructions || us?.tone_instructions || null,
+      prompt: sched.prompt, tone: sched.tone_instructions || us?.tone_instructions || null, skillSlug: us?.active_skill || null,
       sourceCtx, model, key, url, language: sched.language,
     });
     hash = await sha256Hex(g.content.replace(/\s+/g, " ").trim().toLowerCase().substring(0, 500));

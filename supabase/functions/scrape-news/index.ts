@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveProjectFirecrawlKey } from "../_shared/firecrawl.ts";
 import { gatherSourceContext, type SourceInput } from "../_shared/web-sources.ts";
 
 const corsHeaders = {
@@ -37,8 +38,9 @@ serve(async (req) => {
       return json(400, { success: false, error: "No enabled sources. Add URLs or keywords in Settings." });
     }
 
+    const firecrawlKey = await resolveProjectFirecrawlKey(supabase, settings?.firecrawl_api_key);
     const { context, provider } = await gatherSourceContext(resolved, {
-      firecrawlKey: settings?.firecrawl_api_key,
+      firecrawlKey,
       maxUrls: 5,
       maxKeywords: 5,
       urlSnippetChars: 3000,

@@ -52,6 +52,7 @@ const POSITIONS = [
 ];
 
 const PRESET_PALETTES = [
+  { name: "CommoHedge", colors: ["#0C1322", "#A6FF00", "#FFFFFF", "#8FA0B5"] },
   { name: "LinkedIn", colors: ["#0A66C2", "#FFFFFF", "#1D2226"] },
   { name: "Sunset", colors: ["#FF6B6B", "#FFD93D", "#1A1A2E"] },
   { name: "Forest", colors: ["#2D5016", "#A4C639", "#F4F4F4"] },

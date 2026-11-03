@@ -30,6 +30,8 @@ import {
 } from "@/lib/ai-models";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 import { useLinkedInTargets, targetHealth, HEALTH_META } from "@/hooks/useLinkedInTargets";
+import { CONTENT_SKILLS, getContentSkill } from "@/lib/content-skills";
+import { loadPrefs, savePrefs } from "@/lib/imagePrefs";
 
 
 type UserSettings = {
@@ -52,6 +54,7 @@ type UserSettings = {
   openrouter_api_key?: string | null;
   firecrawl_api_key?: string | null;
   tone_instructions: string | null;
+  active_skill: string | null;
   has_linkedin_client_secret?: boolean;
   has_openai_api_key?: boolean;
   has_gemini_api_key?: boolean;
@@ -66,7 +69,7 @@ type UserSettings = {
 };
 
 const SAFE_SETTINGS_COLUMNS =
-  "user_id, linkedin_client_id, linkedin_organization_id, linkedin_person_urn, linkedin_token_expires_at, post_model, image_model, use_byok, tone_instructions, created_at, updated_at, has_linkedin_client_secret, has_openai_api_key, has_gemini_api_key, has_anthropic_api_key, has_mistral_api_key, has_groq_api_key, has_deepseek_api_key, has_xai_api_key, has_perplexity_api_key, has_openrouter_api_key, has_firecrawl_api_key";
+  "user_id, linkedin_client_id, linkedin_organization_id, linkedin_person_urn, linkedin_token_expires_at, post_model, image_model, use_byok, tone_instructions, active_skill, created_at, updated_at, has_linkedin_client_secret, has_openai_api_key, has_gemini_api_key, has_anthropic_api_key, has_mistral_api_key, has_groq_api_key, has_deepseek_api_key, has_xai_api_key, has_perplexity_api_key, has_openrouter_api_key, has_firecrawl_api_key";
 
 const LS_KEY = (uid: string) => `linkedin_app_draft_${uid}`;
 const LINKEDIN_OAUTH_STATE_KEY = "linkedin_oauth_state";
@@ -283,6 +286,7 @@ const Settings = () => {
         image_model: s.image_model,
         use_byok: s.use_byok,
         tone_instructions: s.tone_instructions,
+        active_skill: s.active_skill || null,
       };
       const maybeSecret = (value: string | null | undefined) =>
         value && value.trim() && !value.startsWith("••••") ? value.trim() : undefined;
@@ -746,11 +750,52 @@ const Settings = () => {
           </div>
 
           <div className="space-y-1">
+            <Label>Skill de contenu (Composer + automatisation + images)</Label>
+            <Select
+              value={s.active_skill || "none"}
+              onValueChange={(v) => {
+                const slug = v === "none" ? null : v;
+                setS({ ...s, active_skill: slug });
+                const skill = getContentSkill(slug);
+                if (skill) {
+                  const prefs = loadPrefs();
+                  savePrefs({
+                    ...prefs,
+                    colors: [
+                      skill.imageBrand.background,
+                      skill.imageBrand.accent,
+                      skill.imageBrand.text,
+                      skill.imageBrand.secondary,
+                    ],
+                    style: "premium commodity desk editorial, dark navy panels, lime accents, clean hierarchy",
+                    mood: "sharp, institutional, data-led",
+                    wordmark: { text: skill.imageBrand.wordmark, position: "top-left" },
+                    aspectRatio: "16:9 landscape, X and LinkedIn friendly",
+                  });
+                }
+              }}
+            >
+              <SelectTrigger><SelectValue placeholder="Aucun skill" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Aucun (prompt libre)</SelectItem>
+                {CONTENT_SKILLS.map((sk) => (
+                  <SelectItem key={sk.slug} value={sk.slug}>{sk.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              {s.active_skill
+                ? (getContentSkill(s.active_skill)?.description || "Skill actif injecté dans les prompts texte et image.")
+                : "Sans skill, les posts suivent uniquement ton prompt (et la mémoire d’automatisation ci-dessous)."}
+            </p>
+          </div>
+
+          <div className="space-y-1">
             <Label>Mémoire / ton (automatisation seulement)</Label>
             <Textarea
               value={s.tone_instructions || ""}
               onChange={(e) => setS({ ...s, tone_instructions: e.target.value })}
-              placeholder="Utilisé uniquement pour les posts planifiés / file d’attente. Les générations manuelles suivent uniquement ton prompt."
+              placeholder="Utilisé uniquement pour les posts planifiés / file d’attente. Les générations manuelles suivent uniquement ton prompt (sauf skill actif)."
               rows={3}
             />
           </div>
@@ -764,10 +809,10 @@ const Settings = () => {
           </div>
 
           <div className="pt-2 border-t space-y-1">
-            <Label>Firecrawl (optionnel, scraping)</Label>
-            <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-... (optionnel)"} />
+            <Label>Firecrawl (recherche web)</Label>
+            <Input type="password" autoComplete="off" value={s.firecrawl_api_key || ""} onChange={(e) => setS({ ...s, firecrawl_api_key: e.target.value })} placeholder={s.has_firecrawl_api_key ? "•••• enregistré — saisis pour remplacer" : "fc-... (optionnel — sinon clé projet)"} />
             <p className="text-[11px] text-muted-foreground">
-              Sans clé : sources ouvertes (Jina + News RSS / DuckDuckGo).{" "}
+              Priorité : ta clé → clé projet (<code className="text-[10px]">FIRECRAWL_API_KEY</code> / config serveur). Fallback ouvert : Jina + Google News.{" "}
               <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noreferrer" className="text-primary hover:underline">Firecrawl →</a>
             </p>
           </div>

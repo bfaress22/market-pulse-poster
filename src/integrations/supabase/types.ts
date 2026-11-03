@@ -579,6 +579,7 @@ export type Database = {
           perplexity_api_key: string | null
           post_model: string
           tone_instructions: string | null
+          active_skill: string | null
           updated_at: string
           use_byok: boolean
           user_id: string
@@ -615,6 +616,7 @@ export type Database = {
           perplexity_api_key?: string | null
           post_model?: string
           tone_instructions?: string | null
+          active_skill?: string | null
           updated_at?: string
           use_byok?: boolean
           user_id: string
@@ -651,6 +653,7 @@ export type Database = {
           perplexity_api_key?: string | null
           post_model?: string
           tone_instructions?: string | null
+          active_skill?: string | null
           updated_at?: string
           use_byok?: boolean
           user_id?: string

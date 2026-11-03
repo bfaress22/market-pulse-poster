@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,6 +17,7 @@ type Settings = {
   xai_api_key: string | null;
   gemini_api_key: string | null;
   tone_instructions: string | null;
+  active_skill: string | null;
 };
 
 async function callAi(model: string, settings: Settings, messages: unknown[], tools: unknown[], toolName: string) {
@@ -50,11 +52,11 @@ serve(async (req) => {
     if (!userId) return json(401, { success: false, error: "Unauthorized" });
 
     const { data: s } = await supabase.from("user_settings")
-      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions")
+      .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, active_skill")
       .eq("user_id", userId).maybeSingle();
     const settings: Settings = s as Settings ?? {
       post_model: "google/gemini-3-flash-preview", use_byok: false,
-      openai_api_key: null, xai_api_key: null, gemini_api_key: null, tone_instructions: null,
+      openai_api_key: null, xai_api_key: null, gemini_api_key: null, tone_instructions: null, active_skill: null,
     };
 
     const LANG_NAMES: Record<string, string> = {
@@ -63,11 +65,15 @@ serve(async (req) => {
     };
     const langCode = (typeof language === "string" && language) || "fr";
     const langName = LANG_NAMES[langCode] ?? langCode;
+    const skill = resolveContentSkill(settings.active_skill);
+    const skillBlock = skillTextBlock(skill);
 
     const systemPrompt = `Follow the user request. Produce a LinkedIn post from the provided material.
-Prefer ${langName} unless the material or request says otherwise.
-Do not add branding, hashtags, CTAs, or structure unless asked.
-${settings.tone_instructions ? `\nAutomation memory / voice:\n${settings.tone_instructions}` : ""}
+Prefer ${langName} unless the material, skill, or request says otherwise.
+${skill
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults)."
+  : "Do not add branding, hashtags, CTAs, or structure unless asked."}
+${settings.tone_instructions ? `\nAutomation memory / voice:\n${settings.tone_instructions}` : ""}${skillBlock}
 Return JSON via the create_linkedin_post tool.`;
 
     const data = await callAi(
