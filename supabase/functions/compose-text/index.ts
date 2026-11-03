@@ -1,6 +1,6 @@
 // On-demand LinkedIn text: follow the user prompt directly.
 // Memory (tone + enabled sources) only when useMemory=true (automation).
-// Web research runs when the user attaches sources OR the prompt asks to search the web.
+// Web research ALWAYS runs on create (Firecrawl if key present, else open fallbacks).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
@@ -25,11 +25,6 @@ const SITE_ALIASES: Record<string, string> = {
   "trading economics": "tradingeconomics.com",
 };
 
-/** True when the prompt explicitly asks for live web / figures / news lookup. */
-function wantsWebResearch(prompt: string): boolean {
-  return /cherche|search|web|look\s*up|research|reuters|bloomberg|cnbc|eia|chiffres?|figures?|prix|prices?|latest|aujourd.?hui|today|actualité|news|sources?\s+fiables|reliable\s+sources|bourses?|exchange|settlement|clôture|market\s+movers?/i.test(prompt);
-}
-
 function extractPreferredSites(prompt: string): string[] {
   const lower = prompt.toLowerCase();
   const sites = new Set<string>();
@@ -42,12 +37,11 @@ function extractPreferredSites(prompt: string): string[] {
   return [...sites];
 }
 
-/** Build focused keyword searches from the user prompt (never dump the whole brief as one query). */
+/** Build focused keyword searches from the user prompt. */
 function buildResearchKeywords(prompt: string): SourceInput[] {
   const sites = extractPreferredSites(prompt);
   const siteFilter = sites.length ? `(${sites.map((s) => `site:${s}`).join(" OR ")})` : "";
 
-  // Strip writing instructions so the search query stays topical.
   let topic = prompt
     .replace(/n['']invente[\s\S]*$/i, "")
     .replace(/(puis|then)\s+(écris|write|rédige)[\s\S]*$/i, "")
@@ -55,21 +49,24 @@ function buildResearchKeywords(prompt: string): SourceInput[] {
     .replace(/write\s+a\s+(linkedin\s+)?post[\s\S]*$/i, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 180);
+    .slice(0, 160);
 
-  if (!topic) topic = prompt.replace(/\s+/g, " ").trim().slice(0, 160);
+  if (!topic) topic = prompt.replace(/\s+/g, " ").trim().slice(0, 140);
 
   const queries: string[] = [];
-  if (topic) {
-    queries.push(siteFilter ? `${topic} ${siteFilter}` : topic);
-  }
+  if (topic) queries.push(siteFilter ? `${topic} ${siteFilter}` : topic);
 
-  // Extra focused queries when the brief is about markets/commodities (from the prompt itself).
   if (/commodit|marché|market|oil|brent|wti|gas|gold|copper|wheat|metals?/i.test(prompt)) {
-    const movers = siteFilter
-      ? `commodity market movers today prices ${siteFilter}`
-      : "commodity market movers today oil gas gold copper wheat";
-    queries.push(movers);
+    queries.push(
+      siteFilter
+        ? `commodity market movers today prices settlements ${siteFilter}`
+        : "commodity market movers today oil gas gold copper wheat prices",
+    );
+    queries.push(
+      siteFilter
+        ? `Brent WTI TTF gold copper wheat settlement today ${siteFilter}`
+        : "Brent WTI natural gas gold copper wheat price today",
+    );
   }
 
   const seen = new Set<string>();
@@ -87,7 +84,7 @@ function buildResearchKeywords(prompt: string): SourceInput[] {
 async function scrapeTopArticles(
   urls: string[],
   firecrawlKey?: string | null,
-  limit = 5,
+  limit = 6,
 ): Promise<string> {
   const unique = [...new Set(urls)]
     .filter((u) => /^https?:\/\//i.test(u))
@@ -160,20 +157,30 @@ serve(async (req) => {
     }
 
     const promptText = typeof prompt === "string" ? prompt.trim() : "";
-    const researchRequested = mode !== "improve" && wantsWebResearch(promptText);
 
-    // If the prompt asks to search the web and no explicit sources were given, derive keywords.
-    if (researchRequested && !resolvedSources.some((x) => x.type === "url" || x.type === "keyword")) {
-      resolvedSources = [...resolvedSources, ...buildResearchKeywords(promptText)];
+    // ALWAYS research on create when we have a prompt: Firecrawl if key exists, else open sources.
+    if (mode !== "improve" && promptText.length >= 8) {
+      const hasExplicit = resolvedSources.some((x) => x.type === "url" || x.type === "keyword");
+      if (!hasExplicit) {
+        resolvedSources = [...resolvedSources, ...buildResearchKeywords(promptText)];
+      }
     }
 
     let sourceContext = "";
     let sourceProvider: "firecrawl" | "open" = "open";
     let researchUrls: string[] = [];
     let queryCount = 0;
+    let hitCount = 0;
 
     if (mode !== "improve" && resolvedSources.length) {
       queryCount = resolvedSources.filter((x) => x.type === "keyword").length;
+      console.log("compose-text research start", {
+        userId,
+        queries: queryCount,
+        hasFirecrawlKey: !!(s?.firecrawl_api_key && String(s.firecrawl_api_key).trim()),
+        promptLen: promptText.length,
+      });
+
       const gathered = await gatherSourceContext(resolvedSources, {
         firecrawlKey: s?.firecrawl_api_key,
         maxUrls: 6,
@@ -183,18 +190,25 @@ serve(async (req) => {
       sourceContext = gathered.context;
       sourceProvider = gathered.provider;
       researchUrls = gathered.freshUrls;
+      hitCount = gathered.hitCount;
 
-      // Scrape top hit pages so the model sees figures, not only headlines.
-      if (researchRequested && researchUrls.length) {
-        const articles = await scrapeTopArticles(researchUrls, s?.firecrawl_api_key, 5);
+      if (researchUrls.length) {
+        const articles = await scrapeTopArticles(researchUrls, s?.firecrawl_api_key, 6);
         if (articles) {
           sourceContext = [sourceContext, articles].filter(Boolean).join("\n\n---\n\n").substring(0, 28000);
         }
       }
+
+      console.log("compose-text research done", {
+        provider: sourceProvider,
+        urls: researchUrls.length,
+        hits: hitCount,
+        contextLen: sourceContext.length,
+      });
     }
 
     const { model, url, key } = resolveTextProvider(s?.post_model || "google/gemini-3-flash-preview", s);
-    const hasResearch = sourceContext.trim().length > 80;
+    const hasResearch = sourceContext.trim().length > 40;
     const tone = automated && s?.tone_instructions?.trim() ? s.tone_instructions.trim() : "";
 
     const sys = `Follow the user's instructions exactly. Write the LinkedIn post they asked for.
@@ -203,9 +217,7 @@ Return JSON via the write_post tool (title + content).
 ${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}
 ${hasResearch
   ? "WEB RESEARCH IS ATTACHED below. Ground every figure, %, price, and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent."
-  : researchRequested
-    ? "Web research was requested but no usable snippets were retrieved. Say briefly that live figures were unavailable. Do not invent prices or moves."
-    : ""}`;
+  : "Web research returned no usable snippets. Say briefly that live figures were unavailable. Do not invent prices or moves."}`;
 
     const sourceBlock = hasResearch
       ? `\n\n--- Web research (use for facts/figures only) ---\n${sourceContext.substring(0, 22000)}\n--- End research ---`
@@ -267,8 +279,9 @@ ${hasResearch
       usedSources: resolvedSources.length,
       sourceProvider,
       hadWebContext: hasResearch,
-      researchRequested,
+      researchRequested: true,
       queryCount,
+      hitCount,
       researchUrlCount: researchUrls.length,
       usedFirecrawl: sourceProvider === "firecrawl",
       usedMemory: automated,

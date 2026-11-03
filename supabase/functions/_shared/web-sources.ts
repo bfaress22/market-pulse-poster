@@ -44,6 +44,22 @@ function decodeXml(s: string): string {
     .replace(/&#39;/g, "'");
 }
 
+function normalizeHits(raw: unknown[]): SearchHit[] {
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const x = item as Record<string, unknown>;
+      const url = String(x.url || x.link || x.sourceURL || "").trim();
+      if (!url) return null;
+      return {
+        title: String(x.title || x.name || "").trim(),
+        description: String(x.description || x.snippet || x.markdown || "").trim().slice(0, 500),
+        url,
+      };
+    })
+    .filter((x): x is SearchHit => !!x);
+}
+
 /** Scrape a single URL → markdown/text. */
 export async function scrapeUrl(url: string, firecrawlKey?: string | null): Promise<string | null> {
   const fc = resolveFirecrawlKey(firecrawlKey);
@@ -58,6 +74,8 @@ export async function scrapeUrl(url: string, firecrawlKey?: string | null): Prom
         const d = await r.json();
         const md = d.data?.markdown || d.markdown;
         if (md) return String(md);
+      } else {
+        console.warn("firecrawl scrape status", r.status, (await r.text()).slice(0, 200));
       }
     } catch (e) {
       console.warn("firecrawl scrape fail", url, e);
@@ -95,7 +113,7 @@ export async function scrapeUrl(url: string, firecrawlKey?: string | null): Prom
 
 export type SearchHit = { title: string; description: string; url: string };
 
-/** Keyword web search → list of hits. */
+/** Keyword web search → list of hits. Always tries Firecrawl then free fallbacks. */
 export async function searchKeyword(query: string, firecrawlKey?: string | null, limit = 3): Promise<SearchHit[]> {
   const fc = resolveFirecrawlKey(firecrawlKey);
   if (fc) {
@@ -105,17 +123,26 @@ export async function searchKeyword(query: string, firecrawlKey?: string | null,
         headers: { Authorization: `Bearer ${fc}`, "Content-Type": "application/json" },
         body: JSON.stringify({ query, limit: Math.max(limit, 5), tbs: "qdr:w" }),
       });
+      const text = await r.text();
       if (r.ok) {
-        const d = await r.json();
-        const results = d.data || d.web?.results || [];
-        const hits = results
-          .map((x: { title?: string; description?: string; url?: string }) => ({
-            title: x.title || "",
-            description: x.description || "",
-            url: x.url || "",
-          }))
-          .filter((x: SearchHit) => x.url);
+        let d: Record<string, unknown> = {};
+        try { d = JSON.parse(text); } catch { /* ignore */ }
+        const data = d.data;
+        let raw: unknown[] = [];
+        if (Array.isArray(data)) raw = data;
+        else if (data && typeof data === "object") {
+          const obj = data as Record<string, unknown>;
+          if (Array.isArray(obj.web)) raw = obj.web;
+          else if (Array.isArray(obj.results)) raw = obj.results;
+        }
+        if (!raw.length && Array.isArray((d as { web?: { results?: unknown[] } }).web?.results)) {
+          raw = (d as { web: { results: unknown[] } }).web.results;
+        }
+        const hits = normalizeHits(raw);
+        console.log("firecrawl search ok", { query: query.slice(0, 80), hits: hits.length });
         if (hits.length) return hits.slice(0, limit);
+      } else {
+        console.warn("firecrawl search status", r.status, text.slice(0, 300));
       }
     } catch (e) {
       console.warn("firecrawl search fail", query, e);
@@ -140,7 +167,10 @@ export async function searchKeyword(query: string, firecrawlKey?: string | null,
         const desc = stripTags(decodeXml((block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] || "").trim()));
         if (link) hits.push({ title, description: desc.slice(0, 400), url: link });
       }
-      if (hits.length) return hits.slice(0, limit);
+      if (hits.length) {
+        console.log("google news rss ok", { query: query.slice(0, 80), hits: hits.length });
+        return hits.slice(0, limit);
+      }
     }
   } catch (e) {
     console.warn("google news rss fail", query, e);
@@ -161,7 +191,6 @@ export async function searchKeyword(query: string, firecrawlKey?: string | null,
       let m: RegExpExecArray | null;
       while ((m = re.exec(html)) && hits.length < limit) {
         let href = m[1];
-        // DDG wraps redirects: //duckduckgo.com/l/?uddg=<encoded>
         const uddg = href.match(/[?&]uddg=([^&]+)/);
         if (uddg) href = decodeURIComponent(uddg[1]);
         hits.push({
@@ -170,12 +199,16 @@ export async function searchKeyword(query: string, firecrawlKey?: string | null,
           url: href,
         });
       }
-      if (hits.length) return hits;
+      if (hits.length) {
+        console.log("duckduckgo ok", { query: query.slice(0, 80), hits: hits.length });
+        return hits;
+      }
     }
   } catch (e) {
     console.warn("duckduckgo search fail", query, e);
   }
 
+  console.warn("searchKeyword empty", { query: query.slice(0, 80), hadFirecrawl: !!fc });
   return [];
 }
 
@@ -183,7 +216,7 @@ export async function searchKeyword(query: string, firecrawlKey?: string | null,
 export async function gatherSourceContext(
   sources: SourceInput[],
   opts: GatherOptions = {},
-): Promise<{ context: string; freshUrls: string[]; provider: "firecrawl" | "open" }> {
+): Promise<{ context: string; freshUrls: string[]; provider: "firecrawl" | "open"; hitCount: number }> {
   const firecrawlKey = resolveFirecrawlKey(opts.firecrawlKey);
   const provider = firecrawlKey ? "firecrawl" : "open";
   const maxUrls = opts.maxUrls ?? 4;
@@ -192,6 +225,7 @@ export async function gatherSourceContext(
   const used = opts.usedUrls ?? new Set<string>();
   const chunks: string[] = [];
   const freshUrls: string[] = [];
+  let hitCount = 0;
 
   const ideas = sources.filter((s) => s.type === "idea").map((s) => s.value).filter(Boolean);
   if (ideas.length) chunks.push(`# Ideas / notes from the user\n\n${ideas.map((i) => `- ${i}`).join("\n")}`);
@@ -204,17 +238,19 @@ export async function gatherSourceContext(
     if (md) {
       chunks.push(`# Source: ${url}\n\n${md.substring(0, snippet)}`);
       freshUrls.push(url);
+      hitCount++;
     }
   }));
 
   await Promise.all(keywords.map(async (kw) => {
-    const results = await searchKeyword(kw, firecrawlKey, used.size ? 5 : 3);
-    const fresh = results.filter((x) => x.url && !used.has(x.url)).slice(0, 3);
+    const results = await searchKeyword(kw, firecrawlKey, used.size ? 5 : 4);
+    const fresh = results.filter((x) => x.url && !used.has(x.url)).slice(0, 4);
     if (!fresh.length) return;
+    hitCount += fresh.length;
     const summary = fresh.map((x) => `- ${x.title}: ${x.description} (${x.url})`).join("\n");
     chunks.push(`# Search: ${kw}\n\n${summary}`);
     for (const x of fresh) freshUrls.push(x.url);
   }));
 
-  return { context: chunks.join("\n\n---\n\n"), freshUrls, provider };
+  return { context: chunks.join("\n\n---\n\n"), freshUrls, provider, hitCount };
 }

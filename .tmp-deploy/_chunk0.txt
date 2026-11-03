@@ -1,0 +1,7 @@
+// On-demand LinkedIn text: follow the user prompt directly.
+// Memory (tone + enabled sources) only when useMemory=true (automation).
+// Web research ALWAYS runs on create (Firecrawl if key present, else open fallbacks).
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
+import { gatherSourceContext, scrapeUrl, type SourceInput }
