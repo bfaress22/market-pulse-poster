@@ -8,6 +8,7 @@ export { isCommoHedgeChartPayload } from "./types";
 export { renderCommoHedgeChartBlob, renderCommoHedgeChartToCanvas } from "./render";
 export {
   looksLikeCommoHedgePython,
+  normalizeCommoHedgePython,
   renderCommoHedgePythonBlob,
   stripPythonFences,
 } from "./runPython";

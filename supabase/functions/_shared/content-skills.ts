@@ -52,7 +52,9 @@ Write a BRAND-NEW matplotlib script for THIS analysis — never reuse a fixed to
 The reference renderer (make_image.py) is INSPIRATION ONLY: brand colours, wordmark, footer habits. Invent a layout that best tells today's story (big-number cards, custom bars, timeline, 2×2 shocks, single-asset deep dive, mixed board…).
 
 Hard contract for the script:
-- Self-contained Python 3. OUT, NAVY, CARD, LIME, WHITE, GREY, DGREY, RED, CYAN, MID are predefined. Save with: plt.savefig(OUT, dpi=100, facecolor=NAVY)
+- Self-contained Python 3. OUT, NAVY, CARD, LIME, WHITE, GREY, DGREY, RED, CYAN, MID are predefined — do not redefine OUT.
+- LAST LINE must be exactly: plt.savefig(OUT, dpi=100, facecolor=NAVY)
+  Never savefig("out.png") / "chart.png" / any other path. Never omit savefig.
 - Canvas: figsize=(16, 9) → 1600×900 PNG. Background NAVY #0C1322, cards CARD #131D30, accent LIME #A6FF00, text WHITE, secondary GREY #8FA0B5, down RED #FF4D5E, cyan #4DD9E6.
 - Top-left wordmark "COMMO" white + "HEDGE" lime; lime context tag top-right; footer sources + "Not investment advice" + WWW.COMMOHEDGE.COM in lime.
 - Escape every "$" in matplotlib strings as "\\$". Mark intraday / unverified with hatch or hollow markers and say so in subtitle/footer.

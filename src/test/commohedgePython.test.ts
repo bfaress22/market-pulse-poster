@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeCommoHedgePython, stripPythonFences } from "@/lib/commohedge-chart/runPython";
+import {
+  looksLikeCommoHedgePython,
+  normalizeCommoHedgePython,
+  stripPythonFences,
+} from "@/lib/commohedge-chart/runPython";
 
 describe("CommoHedge Python helpers", () => {
   it("strips markdown fences", () => {
@@ -18,5 +22,15 @@ describe("CommoHedge Python helpers", () => {
           "plt.savefig(OUT, dpi=100, facecolor=NAVY)\n",
       ),
     ).toBe(true);
+  });
+
+  it("rewrites hardcoded png paths to OUT", () => {
+    const raw =
+      "import matplotlib.pyplot as plt\n" +
+      "fig, ax = plt.subplots(figsize=(16, 9))\n" +
+      "plt.savefig('out.png', dpi=100)\n";
+    const n = normalizeCommoHedgePython(raw);
+    expect(n).toContain("savefig(OUT");
+    expect(n).not.toMatch(/savefig\(['"]out\.png['"]/);
   });
 });
