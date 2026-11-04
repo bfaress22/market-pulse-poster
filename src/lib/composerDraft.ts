@@ -5,9 +5,10 @@ export type ComposerDraft = {
   title: string;
   language: string;
   targetIds: string[];
-  imageMode: "ai" | "manual";
+  imageMode: "ai" | "manual" | "chart";
   imagePrompt: string;
   imageUrl: string | null;
+  chartPayload?: unknown | null;
   includeImage: boolean;
   scheduleEnabled: boolean;
   scheduleDate: string | null;

@@ -223,13 +223,13 @@ serve(async (req) => {
 
     const sys = `Follow the user's instructions exactly. Write the LinkedIn post they asked for.
 ${skill
-  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults)."
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults). Also fill the optional chart field when the skill asks for chart JSON."
   : "Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them."}
-Return JSON via the write_post tool (title + content).
+Return JSON via the write_post tool (title + content${skill ? " + chart when possible" : ""}).
 ${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}${skillBlock}
 ${hasResearch
-  ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent."
-  : "Web research returned no usable snippets. Say briefly that live figures were unavailable. Do not invent prices or moves."}`;
+  ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent. Chart pct/levels must come from the same research only."
+  : "Web research returned no usable snippets. Write a short honest note without inventing prices. Set chart to null."}`;
 
     const sourceBlock = hasResearch
       ? `\n\n--- Web research (use for facts/figures only) ---\n${sourceContext.substring(0, 16000)}\n--- End research ---`
@@ -257,12 +257,33 @@ ${hasResearch
           type: "function",
           function: {
             name: "write_post",
-            description: "Return the LinkedIn post",
+            description: skill
+              ? "Return the LinkedIn post and optional CommoHedge chart JSON"
+              : "Return the LinkedIn post",
             parameters: {
               type: "object",
               properties: {
                 title: { type: "string", description: "Short internal title" },
                 content: { type: "string", description: "Full LinkedIn post body as requested" },
+                ...(skill
+                  ? {
+                    chart: {
+                      anyOf: [
+                        { type: "null" },
+                        {
+                          type: "object",
+                          description: "Deterministic chart for the app renderer (tour or headlines). Null if no reliable % moves.",
+                          properties: {
+                            layout: { type: "string", enum: ["tour", "headlines"] },
+                            data: { type: "object" },
+                          },
+                          required: ["layout", "data"],
+                          additionalProperties: false,
+                        },
+                      ],
+                    },
+                  }
+                  : {}),
               },
               required: ["title", "content"],
               additionalProperties: false,
@@ -284,10 +305,14 @@ ${hasResearch
     const tc = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!tc) return json(500, { success: false, error: "AI returned no structured data" });
     const out = JSON.parse(tc.function.arguments);
+    const chart = out.chart && typeof out.chart === "object" && out.chart.layout && out.chart.data
+      ? out.chart
+      : null;
     return json(200, {
       success: true,
       title: out.title,
       content: out.content,
+      chart,
       usedSources: resolvedSources.length,
       sourceProvider,
       hadWebContext: hasResearch,

@@ -15,6 +15,22 @@ dist-ssr
 .env.*
 !.env.example
 
+# Supabase CLI local link / cache (can contain DB pooler URLs with passwords)
+supabase/.temp/
+
+# Secrets & local credentials
+*.pem
+*.p12
+*.key
+credentials.json
+service-account*.json
+
+# Test / build caches
+coverage
+.nyc_output
+.turbo
+.vite
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

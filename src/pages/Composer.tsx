@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Sparkles, Wand2, Image as ImageIcon, Upload, Send, Save, Loader2,
   CalendarIcon, X, Type, RefreshCw, Linkedin, Lightbulb, Globe, Hash, Plus, BookMarked,
-  Repeat, Clock, Zap, Languages, ListChecks,
+  Repeat, Clock, Zap, Languages, ListChecks, BarChart3,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -33,9 +33,16 @@ import TargetSelect from "@/components/TargetSelect";
 import { computeNextRunISO, wallTimeToUtc, formatInZone, isPersistableImageUrl } from "@/lib/scheduleTime";
 import { loadComposerDraft, saveComposerDraft, clearComposerDraft, draftHasWork } from "@/lib/composerDraft";
 import type { PostStatus } from "@/lib/publishStatus";
+import {
+  isCommoHedgeChartPayload,
+  renderCommoHedgeChartBlob,
+  type CommoHedgeChartPayload,
+} from "@/lib/commohedge-chart";
+import { uploadPostAsset } from "@/lib/storage";
 
 
 type Mode = "ai" | "manual";
+type ImageMode = "ai" | "manual" | "chart";
 
 const DAYS = [
   { v: 1, label: "Lun" }, { v: 2, label: "Mar" }, { v: 3, label: "Mer" },
@@ -67,10 +74,11 @@ const Composer = () => {
 
 
   // Image
-  const [imageMode, setImageMode] = useState<Mode>("ai");
+  const [imageMode, setImageMode] = useState<ImageMode>("ai");
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [includeImage, setIncludeImage] = useState(true);
+  const [chartPayload, setChartPayload] = useState<CommoHedgeChartPayload | null>(null);
 
   // Schedule (one-shot)
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -110,6 +118,29 @@ const Composer = () => {
       return data;
     },
   });
+
+  const { data: userSettings } = useQuery({
+    queryKey: ["user_settings_skill", user?.id],
+    enabled: !!user,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("user_settings")
+        .select("active_skill")
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const skillIsCommoHedge = userSettings?.active_skill === "commohedge-daily";
+
+  const applyChartFromResponse = async (raw: unknown): Promise<string | null> => {
+    if (!isCommoHedgeChartPayload(raw) || !user) return null;
+    setChartPayload(raw);
+    const blob = await renderCommoHedgeChartBlob(raw);
+    const path = `${user.id}/${crypto.randomUUID()}.png`;
+    return uploadPostAsset(path, blob, "image/png");
+  };
 
   // (Image Studio is now a preferences editor — no image is sent over.)
 
@@ -175,9 +206,10 @@ const Composer = () => {
       setTitle(draft.title);
       setLanguage(draft.language || DEFAULT_LANGUAGE);
       if (draft.targetIds?.length) setTargetIds(draft.targetIds);
-      setImageMode(draft.imageMode);
+      setImageMode(draft.imageMode === "chart" || draft.imageMode === "manual" || draft.imageMode === "ai" ? draft.imageMode : "ai");
       setImagePrompt(draft.imagePrompt);
       setImageUrl(draft.imageUrl);
+      if (isCommoHedgeChartPayload(draft.chartPayload)) setChartPayload(draft.chartPayload);
       setIncludeImage(draft.includeImage);
       setScheduleEnabled(draft.scheduleEnabled);
       setScheduleDate(draft.scheduleDate ? new Date(draft.scheduleDate) : undefined);
@@ -195,7 +227,7 @@ const Composer = () => {
     const t = window.setTimeout(() => {
       saveComposerDraft(user.id, {
         textMode, textPrompt, content, title, language, targetIds,
-        imageMode, imagePrompt, imageUrl, includeImage,
+        imageMode, imagePrompt, imageUrl, includeImage, chartPayload,
         scheduleEnabled,
         scheduleDate: scheduleDate ? scheduleDate.toISOString() : null,
         scheduleTime, selectedSourceIds, adhocSources, quickSubject,
@@ -204,9 +236,14 @@ const Composer = () => {
     return () => window.clearTimeout(t);
   }, [
     user, draftRestored, textMode, textPrompt, content, title, language, targetIds,
-    imageMode, imagePrompt, imageUrl, includeImage, scheduleEnabled, scheduleDate,
+    imageMode, imagePrompt, imageUrl, includeImage, chartPayload, scheduleEnabled, scheduleDate,
     scheduleTime, selectedSourceIds, adhocSources, quickSubject,
   ]);
+
+  useEffect(() => {
+    if (!draftRestored || !skillIsCommoHedge) return;
+    if (imageMode === "ai") setImageMode("chart");
+  }, [skillIsCommoHedge, draftRestored]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- AI text ----
   const generateText = useMutation({
@@ -228,16 +265,36 @@ const Composer = () => {
 
       return data;
     },
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       setContent(d.content);
       if (!title) setTitle(d.title);
+      let chartNote: string | undefined;
+      if (isCommoHedgeChartPayload(d.chart)) {
+        setChartPayload(d.chart);
+        if (includeImage && imageMode === "chart") {
+          try {
+            const url = await applyChartFromResponse(d.chart);
+            if (url) {
+              setImageUrl(url);
+              chartNote = "chart CommoHedge rendu";
+            }
+          } catch (e: any) {
+            chartNote = e?.message || "échec rendu chart";
+          }
+        } else {
+          chartNote = "chart JSON prêt (onglet Chart)";
+        }
+      }
       toast({
         title: d.hadWebContext ? "Texte généré (recherche web OK)" : "Texte généré",
-        description: d.hadWebContext
-          ? `${d.usedFirecrawl ? "Firecrawl" : "sources ouvertes"} · ${d.queryCount || 0} requêtes · ${d.researchUrlCount || 0} URLs`
-          : d.researchRequested
-            ? "Recherche demandée mais aucun résultat web exploitable"
-            : undefined,
+        description: [
+          d.hadWebContext
+            ? `${d.usedFirecrawl ? "Firecrawl" : "sources ouvertes"} · ${d.queryCount || 0} requêtes · ${d.researchUrlCount || 0} URLs`
+            : d.researchRequested
+              ? "Recherche demandée mais aucun résultat web exploitable"
+              : null,
+          chartNote,
+        ].filter(Boolean).join(" · ") || undefined,
       });
     },
     onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
@@ -275,18 +332,58 @@ const Composer = () => {
     onSettled: () => setBusy(null),
   });
 
-  // ---- Quick generate: subject → text + image in parallel ----
+  // ---- Deterministic CommoHedge chart ----
+  const generateChart = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error("Non connecté");
+      setBusy("chart");
+      let payload = chartPayload;
+      if (!payload) {
+        const { data, error } = await supabase.functions.invoke("compose-text", {
+          body: {
+            prompt: textPrompt || content.substring(0, 500) || quickSubject ||
+              "Build the LinkedIn post AND the CommoHedge chart JSON from web research.",
+            currentText: content || undefined,
+            mode: content ? "improve" : "create",
+            language,
+            savedSourceIds: selectedSourceIds,
+            sources: adhocSources.map(({ type, value }) => ({ type, value })),
+          },
+        });
+        if (error) throw new Error(await fnErrorMessage(error, data));
+        if (!data?.success) throw new Error(data?.error || "Failed");
+        if (data.content) setContent(data.content);
+        if (data.title && !title) setTitle(data.title);
+        if (!isCommoHedgeChartPayload(data.chart)) {
+          throw new Error("Aucun chart fiable (chiffres manquants dans la recherche).");
+        }
+        payload = data.chart;
+      }
+      const url = await applyChartFromResponse(payload);
+      if (!url) throw new Error("Rendu chart impossible");
+      return url;
+    },
+    onSuccess: (url) => {
+      setImageUrl(url);
+      toast({ title: "Chart CommoHedge rendu ✨" });
+    },
+    onError: (e: any) => toast({ title: "Erreur chart", description: e.message, variant: "destructive" }),
+    onSettled: () => setBusy(null),
+  });
+
+  // ---- Quick generate: subject → text (+ chart or AI image) ----
   const quickGenerate = useMutation({
     mutationFn: async () => {
       const subject = quickSubject.trim();
       if (!subject) throw new Error("Entre un sujet");
       setBusy("quick");
-      // Sync subject into the AI-text prompt so downstream flows (improve, automate) stay coherent.
       setTextPrompt(subject);
       setTextMode("ai");
-      if (includeImage) setImageMode("ai");
+      const useChart = includeImage && (imageMode === "chart" || skillIsCommoHedge);
+      if (includeImage && useChart) setImageMode("chart");
+      else if (includeImage) setImageMode("ai");
 
-      const textPromise = supabase.functions.invoke("compose-text", {
+      const { data, error } = await supabase.functions.invoke("compose-text", {
         body: {
           prompt: subject,
           mode: "create",
@@ -296,56 +393,60 @@ const Composer = () => {
         },
       });
 
-      const imagePromise = includeImage
-        ? (async () => {
-            const prefs = loadPrefs();
-            return supabase.functions.invoke("generate-image", {
-              body: {
-                prompt: imagePrompt?.trim() || subject,
-                aspectRatio: prefs.aspectRatio,
-                style: prefs.style,
-                mood: prefs.mood,
-                colors: prefs.colors,
-                bottomMarginPercent: prefs.bottomMarginPercent,
-                textOverlay: prefs.textOverlay,
-                wordmark: prefs.wordmark,
-              },
-            });
-          })()
-        : Promise.resolve(null);
-
-      const [textRes, imgRes] = await Promise.allSettled([textPromise, imagePromise]);
-
       let textOk = false;
       let imgOk = false;
       let firstError: string | null = null;
-      if (textRes.status === "fulfilled") {
-        const { data, error } = textRes.value as any;
-        if (!error && data?.success) {
-          setContent(data.content);
-          if (!title) setTitle(data.title);
-          textOk = true;
-        } else if (!firstError) {
-          firstError = await fnErrorMessage(error, data);
+
+      if (!error && data?.success) {
+        setContent(data.content);
+        if (!title) setTitle(data.title);
+        textOk = true;
+        if (includeImage && useChart && isCommoHedgeChartPayload(data.chart)) {
+          try {
+            const url = await applyChartFromResponse(data.chart);
+            if (url) {
+              setImageUrl(url);
+              imgOk = true;
+            }
+          } catch (e: any) {
+            firstError = e?.message || "Échec rendu chart";
+          }
+        } else if (includeImage && useChart) {
+          firstError = "Chart indisponible (pas assez de chiffres sourcés)";
         }
+      } else {
+        firstError = await fnErrorMessage(error, data);
       }
-      if (imgRes.status === "fulfilled" && imgRes.value) {
-        const { data, error } = imgRes.value as any;
-        if (!error && data?.success) {
-          setImageUrl(data.imageUrl);
+
+      if (includeImage && !useChart) {
+        const prefs = loadPrefs();
+        const imgRes = await supabase.functions.invoke("generate-image", {
+          body: {
+            prompt: imagePrompt?.trim() || subject,
+            aspectRatio: prefs.aspectRatio,
+            style: prefs.style,
+            mood: prefs.mood,
+            colors: prefs.colors,
+            bottomMarginPercent: prefs.bottomMarginPercent,
+            textOverlay: prefs.textOverlay,
+            wordmark: prefs.wordmark,
+          },
+        });
+        if (!imgRes.error && imgRes.data?.success) {
+          setImageUrl(imgRes.data.imageUrl);
           imgOk = true;
         } else if (!firstError) {
-          firstError = await fnErrorMessage(error, data);
+          firstError = await fnErrorMessage(imgRes.error, imgRes.data);
         }
       }
-      if (!textOk && !imgOk) throw new Error(firstError || "La génération a échoué");
 
-      return { textOk, imgOk };
+      if (!textOk && !imgOk) throw new Error(firstError || "La génération a échoué");
+      return { textOk, imgOk, chart: useChart };
     },
-    onSuccess: ({ textOk, imgOk }) => {
+    onSuccess: ({ textOk, imgOk, chart }) => {
       toast({
         title: "Généré ✨",
-        description: [textOk && "texte", imgOk && "image"].filter(Boolean).join(" + ") || "prêt",
+        description: [textOk && "texte", imgOk && (chart ? "chart" : "image")].filter(Boolean).join(" + ") || "prêt",
       });
     },
     onError: (e: any) => toast({ title: "Erreur", description: e.message, variant: "destructive" }),
@@ -785,8 +886,9 @@ const Composer = () => {
                 <ImageIcon className="h-4 w-4 text-primary" /> Image
                 <Switch checked={includeImage} onCheckedChange={setIncludeImage} className="ml-2" />
               </CardTitle>
-              <Tabs value={imageMode} onValueChange={(v) => setImageMode(v as Mode)}>
+              <Tabs value={imageMode} onValueChange={(v) => setImageMode(v as ImageMode)}>
                 <TabsList className="h-8">
+                  <TabsTrigger value="chart" className="text-xs gap-1"><BarChart3 className="h-3 w-3" />Chart</TabsTrigger>
                   <TabsTrigger value="ai" className="text-xs gap-1"><Sparkles className="h-3 w-3" />IA</TabsTrigger>
                   <TabsTrigger value="manual" className="text-xs gap-1"><Upload className="h-3 w-3" />Upload</TabsTrigger>
                 </TabsList>
@@ -794,7 +896,34 @@ const Composer = () => {
             </CardHeader>
             {includeImage && (
               <CardContent className="p-5 space-y-4">
-                {imageMode === "ai" ? (
+                {imageMode === "chart" ? (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      Charte déterministe CommoHedge 1600×900 (layouts tour / headlines) à partir des chiffres du skill — pas d’image IA.
+                      {skillIsCommoHedge ? " Skill actif." : " Active le skill CommoHedge dans Settings pour un chart auto à la génération texte."}
+                    </p>
+                    {chartPayload && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        JSON prêt · {chartPayload.layout}
+                      </Badge>
+                    )}
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => generateChart.mutate()}
+                        disabled={busy === "chart"}
+                        className="bg-gradient-to-r from-primary to-accent text-white"
+                      >
+                        {busy === "chart" ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
+                        {imageUrl ? "Re-rendre le chart" : "Générer le chart"}
+                      </Button>
+                      {imageUrl && (
+                        <Button variant="outline" onClick={() => setImageUrl(null)}>
+                          <X className="h-4 w-4" /> Retirer
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : imageMode === "ai" ? (
                   <div className="space-y-2">
                     <Label className="text-xs uppercase tracking-wider text-muted-foreground">Prompt image</Label>
                     <Textarea
