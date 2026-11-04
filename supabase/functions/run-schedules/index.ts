@@ -11,7 +11,8 @@ import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueSchedules, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
 import { computeNextRun, makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
 import { jobLog } from "../_shared/logger.ts";
-import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
+import { resolveContentSkill, skillTextBlock, skillUsesMarketAnalysis } from "../_shared/content-skills.ts";
+import { runMarketAnalysis, buildAnalysisMaterial } from "../_shared/market-analysis.ts";
 
 
 const corsHeaders = {
@@ -64,7 +65,7 @@ ${skill
 ${opts.tone ? `Automation memory / voice:\n${opts.tone}` : ""}${skillBlock}
 ${opts.sourceCtx ? "Reference material is provided — use it only to satisfy the prompt (and skill hard rules)." : ""}
 Return JSON via the write_post tool.`;
-  const sourceBlock = opts.sourceCtx ? `\n\n--- Reference material ---\n${opts.sourceCtx.substring(0, 12000)}\n--- End ---` : "";
+  const sourceBlock = opts.sourceCtx ? `\n\n--- Reference material ---\n${opts.sourceCtx.substring(0, 16000)}\n--- End ---` : "";
   const userMsg = `${opts.prompt || "Write a LinkedIn post."}${sourceBlock}`;
 
   const res = await fetch(opts.url, {
@@ -178,13 +179,30 @@ async function processSchedule(supabase: any, sched: any) {
   const { context: sourceCtx, freshUrls } = await gatherSources(sources, usedUrlSet, firecrawlKey);
   const { model, url, key } = resolveTextProvider(sched.ai_model || us?.post_model || "google/gemini-3-flash-preview", us);
 
+  // Two-step skills: deep research -> research log -> analysis, then the post is written from that analysis only.
+  let writeCtx = sourceCtx;
+  if (skillUsesMarketAnalysis(resolveContentSkill(us?.active_skill))) {
+    try {
+      const a = await runMarketAnalysis({
+        focus: sched.prompt || "",
+        provider: { model, url, key },
+        firecrawlKey,
+        extraSources: sources,
+      });
+      if (a.analysis.trim().length > 100) writeCtx = buildAnalysisMaterial(a.analysis, a.researchLog, a.news);
+      jobLog("ANALYSIS_READY", { schedule: sched.id, rows: a.researchLog.length });
+    } catch (e) {
+      console.warn(`schedule ${sched.id}: market analysis failed, falling back to plain sources`, e);
+    }
+  }
+
   // Try up to 2 generations to avoid duplicate
   let attempt = 0; let generated: { title: string; content: string } | null = null; let hash = "";
   while (attempt < 2) {
     attempt++;
     const g = await generateText({
       prompt: sched.prompt, tone: sched.tone_instructions || us?.tone_instructions || null, skillSlug: us?.active_skill || null,
-      sourceCtx, model, key, url, language: sched.language,
+      sourceCtx: writeCtx, model, key, url, language: sched.language,
     });
     hash = await sha256Hex(g.content.replace(/\s+/g, " ").trim().toLowerCase().substring(0, 500));
     if (!recentHashes.has(hash)) { generated = g; break; }

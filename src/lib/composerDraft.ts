@@ -9,6 +9,9 @@ export type ComposerDraft = {
   imagePrompt: string;
   imageUrl: string | null;
   chartPayload?: unknown | null;
+  analysis?: string;
+  researchLog?: unknown[];
+  analysisNews?: unknown[];
   includeImage: boolean;
   scheduleEnabled: boolean;
   scheduleDate: string | null;

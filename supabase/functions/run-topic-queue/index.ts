@@ -10,7 +10,9 @@ import { authorizeCronOrUser } from "../_shared/cron-auth.ts";
 import { claimDueTopics, upsertAndClaimJob, finalizeJob } from "../_shared/jobs.ts";
 import { makeIdempotencyKey, isPersistableImageUrl } from "../_shared/schedule-time.ts";
 import { jobLog } from "../_shared/logger.ts";
-import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
+import { resolveContentSkill, skillTextBlock, skillUsesMarketAnalysis } from "../_shared/content-skills.ts";
+import { resolveProjectFirecrawlKey } from "../_shared/firecrawl.ts";
+import { runMarketAnalysis, buildAnalysisMaterial } from "../_shared/market-analysis.ts";
 
 
 const corsHeaders = {
@@ -27,6 +29,7 @@ const LANG_NAMES: Record<string, string> = {
 
 async function generatePostText(opts: {
   subject: string; language: string; tone: string | null; skillSlug: string | null; model: string; key: string; url: string;
+  material?: string;
 }): Promise<{ title: string; content: string }> {
   const langName = LANG_NAMES[opts.language] || LANG_NAMES.fr;
   const skill = resolveContentSkill(opts.skillSlug);
@@ -46,7 +49,12 @@ Return JSON via the write_post tool.`;
       model: opts.model,
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: opts.subject },
+        {
+          role: "user",
+          content: opts.material
+            ? `${opts.subject}\n\n--- Reference material (only allowed source of facts) ---\n${opts.material.substring(0, 16000)}\n--- End ---`
+            : opts.subject,
+        },
       ],
       tools: [{
         type: "function",
@@ -119,10 +127,23 @@ async function generateImage(prompt: string, model: string | null, supabase: any
 async function processTopic(supabase: any, topic: any) {
   const userId = topic.user_id;
   const { data: us } = await supabase.from("user_settings")
-    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, tone_instructions, image_model, active_skill")
+    .select("post_model, use_byok, openai_api_key, xai_api_key, gemini_api_key, firecrawl_api_key, tone_instructions, image_model, active_skill")
     .eq("user_id", userId).maybeSingle();
 
   const { model, url, key } = resolveTextProvider(us?.post_model || "google/gemini-3-flash-preview", us);
+
+  // Two-step skills: deep research -> research log -> analysis, then the post is written from that analysis only.
+  let material: string | undefined;
+  if (skillUsesMarketAnalysis(resolveContentSkill(us?.active_skill))) {
+    try {
+      const firecrawlKey = await resolveProjectFirecrawlKey(supabase, us?.firecrawl_api_key);
+      const a = await runMarketAnalysis({ focus: topic.subject, provider: { model, url, key }, firecrawlKey });
+      if (a.analysis.trim().length > 100) material = buildAnalysisMaterial(a.analysis, a.researchLog, a.news);
+      jobLog("ANALYSIS_READY", { topic: topic.id, rows: a.researchLog.length });
+    } catch (e) {
+      console.warn(`topic ${topic.id}: market analysis failed, writing without research`, e);
+    }
+  }
 
   const generated = await generatePostText({
     subject: topic.subject,
@@ -130,6 +151,7 @@ async function processTopic(supabase: any, topic: any) {
     tone: us?.tone_instructions || null,
     skillSlug: us?.active_skill || null,
     model, key, url,
+    material,
   });
 
   let imageUrl: string | null = null;

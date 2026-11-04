@@ -79,6 +79,11 @@ const Composer = () => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [includeImage, setIncludeImage] = useState(true);
   const [chartPayload, setChartPayload] = useState<CommoHedgeChartPayload | null>(null);
+  // Step 1 output (deep research → research log → analysis). Step 2 (post + chart) is written from it.
+  const [analysis, setAnalysis] = useState("");
+  const [researchLog, setResearchLog] = useState<unknown[]>([]);
+  const [analysisNews, setAnalysisNews] = useState<unknown[]>([]);
+  const [analysisFor, setAnalysisFor] = useState("");
 
   // Schedule (one-shot)
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -227,6 +232,9 @@ const Composer = () => {
       setImagePrompt(draft.imagePrompt);
       setImageUrl(draft.imageUrl);
       if (isCommoHedgeChartPayload(draft.chartPayload)) setChartPayload(draft.chartPayload);
+      if (typeof draft.analysis === "string") setAnalysis(draft.analysis);
+      if (Array.isArray(draft.researchLog)) setResearchLog(draft.researchLog);
+      if (Array.isArray(draft.analysisNews)) setAnalysisNews(draft.analysisNews);
       setIncludeImage(draft.includeImage);
       setScheduleEnabled(draft.scheduleEnabled);
       setScheduleDate(draft.scheduleDate ? new Date(draft.scheduleDate) : undefined);
@@ -245,6 +253,7 @@ const Composer = () => {
       saveComposerDraft(user.id, {
         textMode, textPrompt, content, title, language, targetIds,
         imageMode, imagePrompt, imageUrl, includeImage, chartPayload,
+        analysis, researchLog, analysisNews,
         scheduleEnabled,
         scheduleDate: scheduleDate ? scheduleDate.toISOString() : null,
         scheduleTime, selectedSourceIds, adhocSources, quickSubject,
@@ -253,7 +262,8 @@ const Composer = () => {
     return () => window.clearTimeout(t);
   }, [
     user, draftRestored, textMode, textPrompt, content, title, language, targetIds,
-    imageMode, imagePrompt, imageUrl, includeImage, chartPayload, scheduleEnabled, scheduleDate,
+    imageMode, imagePrompt, imageUrl, includeImage, chartPayload, analysis, researchLog, analysisNews,
+    scheduleEnabled, scheduleDate,
     scheduleTime, selectedSourceIds, adhocSources, quickSubject,
   ]);
 
@@ -262,10 +272,62 @@ const Composer = () => {
     if (imageMode === "ai") setImageMode("chart");
   }, [skillIsCommoHedge, draftRestored]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- Step 1: deep research → research log → analysis ----
+  const runAnalysis = async (subject: string) => {
+    const { data, error } = await supabase.functions.invoke("analyze-market", {
+      body: {
+        prompt: subject,
+        savedSourceIds: selectedSourceIds,
+        sources: adhocSources.map(({ type, value }) => ({ type, value })),
+      },
+    });
+    if (error) throw new Error(await fnErrorMessage(error, data));
+    if (!data?.success) throw new Error(data?.error || "Analyse impossible");
+    setAnalysis(data.analysis || "");
+    setResearchLog(Array.isArray(data.researchLog) ? data.researchLog : []);
+    setAnalysisNews(Array.isArray(data.news) ? data.news : []);
+    setAnalysisFor(subject);
+    setChartPayload(null);
+    return data as {
+      analysis: string; researchLog: unknown[]; news: unknown[]; title?: string;
+      queryCount?: number; articleCount?: number; usedFirecrawl?: boolean;
+    };
+  };
+
+  const analysisPayload = (fresh?: { analysis: string; researchLog: unknown[]; news: unknown[] }) => {
+    const a = fresh?.analysis ?? analysis;
+    return a.trim().length > 100
+      ? { analysis: a, researchLog: fresh?.researchLog ?? researchLog, news: fresh?.news ?? analysisNews }
+      : {};
+  };
+
+  const analyzeMarket = useMutation({
+    mutationFn: async () => {
+      setBusy("analysis");
+      const subject = (textPrompt || quickSubject).trim();
+      return runAnalysis(subject);
+    },
+    onSuccess: (d) => {
+      toast({
+        title: "Analyse prête",
+        description: `${d.researchLog?.length || 0} lignes de log · ${d.articleCount || 0} articles lus${d.usedFirecrawl ? " · Firecrawl" : ""}`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Erreur analyse", description: e.message, variant: "destructive" }),
+    onSettled: () => setBusy(null),
+  });
+
   // ---- AI text ----
   const generateText = useMutation({
     mutationFn: async (mode: "create" | "improve") => {
       setBusy("text");
+      const subject = textPrompt.trim();
+      // Two-step skills: reuse the analysis for this subject, or run it first.
+      let freshAnalysis: Awaited<ReturnType<typeof runAnalysis>> | undefined;
+      if (skillIsCommoHedge && mode === "create") {
+        const reusable = analysis.trim().length > 100 && (!analysisFor || analysisFor === subject);
+        if (!reusable) freshAnalysis = await runAnalysis(subject);
+      }
       const { data, error } = await supabase.functions.invoke("compose-text", {
         body: {
           prompt: textPrompt,
@@ -275,6 +337,9 @@ const Composer = () => {
           language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
+          ...(skillIsCommoHedge && mode === "create"
+            ? analysisPayload(freshAnalysis ? { analysis: freshAnalysis.analysis, researchLog: freshAnalysis.researchLog, news: freshAnalysis.news } : undefined)
+            : {}),
         },
       });
       if (error) throw new Error(await fnErrorMessage(error, data));
@@ -356,15 +421,20 @@ const Composer = () => {
       setBusy("chart");
       let payload = chartPayload;
       if (!payload) {
+        const subject = (textPrompt || quickSubject).trim();
+        let fresh: Awaited<ReturnType<typeof runAnalysis>> | undefined;
+        if (skillIsCommoHedge && analysis.trim().length <= 100) fresh = await runAnalysis(subject);
         const { data, error } = await supabase.functions.invoke("compose-text", {
           body: {
-            prompt: textPrompt || content.substring(0, 500) || quickSubject ||
-              "Build the LinkedIn post AND the CommoHedge chart JSON from web research.",
+            prompt: subject || content.substring(0, 500) ||
+              "Build the LinkedIn post AND the CommoHedge chart JSON from the analysis.",
             currentText: content || undefined,
-            mode: content ? "improve" : "create",
+            mode: "create",
+            chartOnly: !!content.trim(),
             language,
             savedSourceIds: selectedSourceIds,
             sources: adhocSources.map(({ type, value }) => ({ type, value })),
+            ...analysisPayload(fresh ? { analysis: fresh.analysis, researchLog: fresh.researchLog, news: fresh.news } : undefined),
           },
         });
         if (error) throw new Error(await fnErrorMessage(error, data));
@@ -400,6 +470,20 @@ const Composer = () => {
       if (includeImage && useChart) setImageMode("chart");
       else if (includeImage) setImageMode("ai");
 
+      let textOk = false;
+      let imgOk = false;
+      let firstError: string | null = null;
+
+      // Step 1 (CommoHedge): deep research → research log → analysis. Step 2 writes from it.
+      let fresh: Awaited<ReturnType<typeof runAnalysis>> | undefined;
+      if (skillIsCommoHedge) {
+        try {
+          fresh = await runAnalysis(subject);
+        } catch (e: any) {
+          throw new Error(`Analyse échouée : ${e?.message || "erreur inconnue"}`);
+        }
+      }
+
       const { data, error } = await supabase.functions.invoke("compose-text", {
         body: {
           prompt: subject,
@@ -407,12 +491,9 @@ const Composer = () => {
           language,
           savedSourceIds: selectedSourceIds,
           sources: adhocSources.map(({ type, value }) => ({ type, value })),
+          ...(fresh ? analysisPayload({ analysis: fresh.analysis, researchLog: fresh.researchLog, news: fresh.news }) : {}),
         },
       });
-
-      let textOk = false;
-      let imgOk = false;
-      let firstError: string | null = null;
 
       if (!error && data?.success) {
         setContent(data.content);
@@ -815,6 +896,77 @@ const Composer = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* ANALYSIS block (CommoHedge skill): research → log → analysis */}
+          {skillIsCommoHedge && (
+            <Card className="border-border/50 bg-card/60 backdrop-blur-xl">
+              <CardHeader className="border-b border-border/40 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <span className="h-6 w-6 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center">1</span>
+                  <BarChart3 className="h-4 w-4 text-primary" /> Analyse de marché
+                  <Badge variant="secondary" className="ml-1 text-[10px]">recherche → log → analyse (EN)</Badge>
+                </CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => analyzeMarket.mutate()}
+                  disabled={busy === "analysis"}
+                >
+                  {busy === "analysis" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {analysis ? "Relancer l'analyse" : "Analyser le marché"}
+                </Button>
+              </CardHeader>
+              <CardContent className="p-5 space-y-4">
+                {!analysis && busy !== "analysis" && (
+                  <p className="text-xs text-muted-foreground">
+                    Lance l'analyse (ou « Générer » : elle se fait automatiquement). Le post et le chart sont ensuite écrits uniquement à partir de cette analyse et de son research log.
+                  </p>
+                )}
+                {busy === "analysis" && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Recherche web, log des prix puis rédaction de l'analyse… (30–90 s)
+                  </p>
+                )}
+                {researchLog.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Research log ({researchLog.length})
+                    </Label>
+                    <div className="max-h-48 overflow-auto rounded-md border border-border/40 bg-background/40 text-xs">
+                      <table className="w-full">
+                        <tbody>
+                          {(researchLog as any[]).map((r, i) => (
+                            <tr key={i} className="border-b border-border/30 last:border-0">
+                              <td className="px-2 py-1 font-medium">{String(r.asset ?? "")}</td>
+                              <td className="px-2 py-1 font-mono">{String(r.value ?? "")}</td>
+                              <td className="px-2 py-1 font-mono text-muted-foreground">
+                                {r.pct !== undefined && r.pct !== null ? `${Number(r.pct) > 0 ? "+" : ""}${r.pct}%` : String(r.change ?? "")}
+                              </td>
+                              <td className="px-2 py-1 text-muted-foreground">{String(r.source ?? "")}</td>
+                              <td className="px-2 py-1 text-muted-foreground">{String(r.confidence ?? "")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {analysis && (
+                  <div className="space-y-2">
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Analyse (modifiable avant génération du post)
+                    </Label>
+                    <Textarea
+                      value={analysis}
+                      onChange={(e) => setAnalysis(e.target.value)}
+                      rows={14}
+                      className="bg-background/40 text-sm"
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* TEXT block */}
           <Card className="border-border/50 bg-card/60 backdrop-blur-xl">

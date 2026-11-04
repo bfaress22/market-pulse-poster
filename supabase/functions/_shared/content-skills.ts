@@ -78,6 +78,11 @@ export function resolveContentSkill(slug: string | null | undefined): ContentSki
   return CONTENT_SKILLS[slug.trim()] ?? null;
 }
 
+/** Skills that run research -> analysis before writing the post. */
+export function skillUsesMarketAnalysis(skill: ContentSkill | null | undefined): boolean {
+  return skill?.slug === "commohedge-daily";
+}
+
 export function skillTextBlock(skill: ContentSkill | null | undefined): string {
   if (!skill) return "";
   return `\n\n--- Active skill: ${skill.name} ---\n${skill.textAddon}\n--- End skill ---`;

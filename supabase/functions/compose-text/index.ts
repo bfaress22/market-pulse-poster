@@ -6,6 +6,7 @@ import { resolveTextProvider, xaiErrorMessage } from "../_shared/ai-text.ts";
 import { resolveProjectFirecrawlKey } from "../_shared/firecrawl.ts";
 import { gatherSourceContext, scrapeUrl, type SourceInput } from "../_shared/web-sources.ts";
 import { resolveContentSkill, skillTextBlock } from "../_shared/content-skills.ts";
+import { buildAnalysisMaterial } from "../_shared/market-analysis.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -111,6 +112,10 @@ serve(async (req) => {
       sources,
       savedSourceIds,
       useMemory = false,
+      analysis,
+      researchLog,
+      news,
+      chartOnly = false,
     } = body;
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -156,7 +161,10 @@ serve(async (req) => {
 
     const promptText = typeof prompt === "string" ? prompt.trim() : "";
 
-    if (mode !== "improve" && promptText.length >= 8) {
+    // Step-2 mode: an approved analysis + research log replaces web research entirely.
+    const hasAnalysis = typeof analysis === "string" && analysis.trim().length > 100;
+
+    if (!hasAnalysis && mode !== "improve" && promptText.length >= 8) {
       const hasExplicit = resolvedSources.some((x) => x.type === "url" || x.type === "keyword");
       if (!hasExplicit) resolvedSources = [...resolvedSources, ...buildResearchKeywords(promptText)];
     }
@@ -167,7 +175,11 @@ serve(async (req) => {
     let queryCount = 0;
     let hitCount = 0;
 
-    if (mode !== "improve" && resolvedSources.length) {
+    if (hasAnalysis) {
+      sourceContext = buildAnalysisMaterial(analysis, researchLog, news);
+    }
+
+    if (!hasAnalysis && mode !== "improve" && resolvedSources.length) {
       queryCount = resolvedSources.filter((x) => x.type === "keyword").length;
       const firecrawlKey = await resolveProjectFirecrawlKey(supabase, s?.firecrawl_api_key);
 
@@ -227,16 +239,21 @@ ${skill
   : "Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them."}
 Return JSON via the write_post tool (title + content${skill ? " + chart when possible" : ""}).
 ${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}${skillBlock}
-${hasResearch
-  ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent. Chart pct/levels must come from the same research only."
-  : "Web research returned no usable snippets. Write a short honest note without inventing prices. Set chart to null."}`;
+${hasAnalysis
+  ? "AN APPROVED MARKET ANALYSIS AND RESEARCH LOG ARE ATTACHED below (already researched and verified). Write ONLY from them: no new facts, no new numbers, no web knowledge. Chart rows must use pct values and levels from the research log rows only; leave out any asset without a pct."
+  : hasResearch
+    ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent. Chart pct/levels must come from the same research only."
+    : "Web research returned no usable snippets. Write a short honest note without inventing prices. Set chart to null."}${
+  chartOnly ? "\nCHART ONLY: the existing post is provided; keep its content exactly and focus on the chart field." : ""}`;
 
     const sourceBlock = hasResearch
-      ? `\n\n--- Web research (use for facts/figures only) ---\n${sourceContext.substring(0, 16000)}\n--- End research ---`
+      ? `\n\n${hasAnalysis ? "" : "--- Web research (use for facts/figures only) ---\n"}${sourceContext.substring(0, 16000)}${hasAnalysis ? "" : "\n--- End research ---"}`
       : "";
 
     let userMsg: unknown;
-    if (mode === "improve" && currentText) {
+    if (chartOnly && currentText) {
+      userMsg = `Existing LinkedIn post (keep as is in content):\n\n${currentText}\n\nBuild the CommoHedge chart JSON for it from the attached material.${sourceBlock}`;
+    } else if (mode === "improve" && currentText) {
       userMsg = `Improve this LinkedIn draft according to the instructions.\n\nDraft:\n${currentText}\n\nInstructions: ${promptText || "Polish clarity and flow."}${sourceBlock}`;
     } else if (imageUrl) {
       userMsg = [
@@ -311,8 +328,9 @@ ${hasResearch
     return json(200, {
       success: true,
       title: out.title,
-      content: out.content,
+      content: chartOnly && typeof currentText === "string" && currentText.trim() ? currentText : out.content,
       chart,
+      usedAnalysis: hasAnalysis,
       usedSources: resolvedSources.length,
       sourceProvider,
       hadWebContext: hasResearch,
