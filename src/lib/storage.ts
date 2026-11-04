@@ -30,21 +30,28 @@ export async function getDisplayableImageUrl(url: string | null | undefined): Pr
 }
 
 /**
- * Upload a file to post-assets and return a signed URL.
+ * Upload a file to post-assets and return a usable URL (signed, else public).
  */
 export async function uploadPostAsset(
   path: string,
   file: File | Blob,
   contentType?: string,
 ): Promise<string> {
+  const mime = contentType ?? (file as File).type ?? "application/octet-stream";
   const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
-    contentType: contentType ?? (file as File).type,
+    contentType: mime,
     upsert: false,
   });
-  if (error) throw error;
-  const { data, error: signErr } = await supabase.storage
+  if (error) throw new Error(error.message || "Upload storage échoué");
+
+  const { data: signed, error: signErr } = await supabase.storage
     .from(BUCKET)
     .createSignedUrl(path, SIGNED_TTL);
-  if (signErr || !data?.signedUrl) throw signErr ?? new Error("Failed to sign URL");
-  return data.signedUrl;
+  if (!signErr && signed?.signedUrl) return signed.signedUrl;
+
+  // Public bucket fallback when SELECT/sign policies are missing or lagging.
+  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  if (pub?.publicUrl) return pub.publicUrl;
+
+  throw new Error(signErr?.message || "Impossible de générer l'URL de l'image");
 }

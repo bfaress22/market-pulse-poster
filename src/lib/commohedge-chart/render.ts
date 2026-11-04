@@ -237,9 +237,16 @@ function renderTour(ctx: CanvasRenderingContext2D, d: TourChartData) {
   });
 
   const groups = (d.groups || []).slice(0, 4);
+  if (!groups.length) {
+    ctx.fillStyle = GREY;
+    ctx.font = "24px system-ui, Segoe UI, sans-serif";
+    ctx.fillText("No commodity groups in chart JSON", px(0.035, W), px(0.5, H));
+    drawFooter(ctx, d);
+    return;
+  }
   const vals = groups.flatMap((g) => (g.rows || []).map((r) => Number(r.pct) || 0));
-  const lo = Math.min(0, ...vals, 0);
-  const hi = Math.max(0, ...vals, 0);
+  const lo = Math.min(0, ...(vals.length ? vals : [0]));
+  const hi = Math.max(0, ...(vals.length ? vals : [0]));
   const xlim: [number, number] = d.xlim || [lo * 1.35 - 0.6, hi * 1.35 + 0.8];
   const CW = px(0.455, W);
   const spots: [number, number, number][] = [

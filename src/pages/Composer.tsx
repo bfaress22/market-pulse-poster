@@ -139,7 +139,24 @@ const Composer = () => {
     setChartPayload(raw);
     const blob = await renderCommoHedgeChartBlob(raw);
     const path = `${user.id}/${crypto.randomUUID()}.png`;
-    return uploadPostAsset(path, blob, "image/png");
+    try {
+      return await uploadPostAsset(path, blob, "image/png");
+    } catch (e: any) {
+      // Still show the deterministic chart locally if Storage rejects the upload.
+      console.warn("chart upload failed, using data URL", e);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(e);
+        reader.readAsDataURL(blob);
+      });
+      toast({
+        title: "Chart rendu (aperçu local)",
+        description: e?.message || "Upload Storage échoué — republie après fix bucket.",
+        variant: "destructive",
+      });
+      return dataUrl;
+    }
   };
 
   // (Image Studio is now a preferences editor — no image is sent over.)
