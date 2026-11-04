@@ -59,7 +59,9 @@ export function normalizeCommoHedgePython(raw: string): string {
 /**
  * Execute a self-contained matplotlib script.
  * Injected globals: OUT, NAVY, CARD, LIME, WHITE, GREY, DGREY, RED, CYAN, MID
- * Any savefig call is redirected to OUT; open figures are force-saved as fallback.
+ *
+ * No monkeypatch of plt.savefig (that recursed on 2nd run in persistent Pyodide).
+ * Paths are rewritten to OUT in JS; after exec we force-save open figures / scoop PNGs.
  */
 export async function renderCommoHedgePythonBlob(code: string): Promise<Blob> {
   const script = normalizeCommoHedgePython(code);
@@ -97,22 +99,16 @@ OUT = OUT_PATH
 NAVY, CARD, LIME, WHITE = "#0C1322", "#131D30", "#A6FF00", "#FFFFFF"
 GREY, DGREY, RED, CYAN, MID = "#8FA0B5", "#3A4759", "#FF4D5E", "#4DD9E6", "#5C6B80"
 
-# Redirect every savefig to OUT so AI scripts that use "out.png" still work.
-_real_plt_savefig = plt.savefig
-def _plt_savefig(*args, **kwargs):
-    kwargs = dict(kwargs)
-    kwargs.setdefault("dpi", 100)
-    kwargs.setdefault("facecolor", kwargs.get("facecolor", NAVY))
-    return _real_plt_savefig(OUT, **{k: v for k, v in kwargs.items()})
-plt.savefig = _plt_savefig
-
-_real_fig_savefig = Figure.savefig
-def _fig_savefig(self, fname=None, *args, **kwargs):
-    kwargs = dict(kwargs)
-    kwargs.setdefault("dpi", 100)
-    kwargs.setdefault("facecolor", kwargs.get("facecolor", NAVY))
-    return _real_fig_savefig(self, OUT, *args, **kwargs)
-Figure.savefig = _fig_savefig
+# Capture TRUE originals once (Pyodide keeps matplotlib across runs).
+if not hasattr(Figure, "_ch_real_savefig"):
+    Figure._ch_real_savefig = Figure.savefig
+if not hasattr(plt, "_ch_real_savefig"):
+    plt._ch_real_savefig = plt.savefig
+# Restore in case a previous buggy patch left wrappers installed.
+Figure.savefig = Figure._ch_real_savefig
+plt.savefig = plt._ch_real_savefig
+_real_fig_savefig = Figure._ch_real_savefig
+_real_plt_savefig = plt._ch_real_savefig
 
 plt.close("all")
 ns = {
@@ -128,7 +124,7 @@ except Exception:
 def _ok(path):
     return os.path.exists(path) and os.path.getsize(path) >= 100
 
-# 1) Force-save any still-open figures
+# Force-save any still-open figures via the real Figure.savefig
 if not _ok(OUT):
     for num in list(plt.get_fignums()):
         fig = plt.figure(num)
@@ -140,18 +136,25 @@ if not _ok(OUT):
         if _ok(OUT):
             break
 
-# 2) Scoop any PNG the script wrote elsewhere
+# Scoop any PNG the script wrote elsewhere (out.png, etc.)
 if not _ok(OUT):
     candidates = []
     for pattern in ("*.png", "/tmp/*.png", "/home/pyodide/*.png"):
         candidates.extend(glob.glob(pattern))
     candidates = sorted(
-        [p for p in candidates if os.path.isfile(p) and os.path.getsize(p) >= 100],
+        [p for p in candidates if os.path.isfile(p) and os.path.getsize(p) >= 100 and os.path.abspath(p) != os.path.abspath(OUT)],
         key=lambda p: os.path.getsize(p),
         reverse=True,
     )
     if candidates:
         shutil.copyfile(candidates[0], OUT)
+
+# Last resort: save current figure even if empty axes check failed earlier
+if not _ok(OUT):
+    try:
+        _real_plt_savefig(OUT, dpi=100, facecolor=NAVY)
+    except Exception:
+        pass
 
 if not _ok(OUT):
     raise RuntimeError(
@@ -161,7 +164,6 @@ plt.close("all")
 `);
   } catch (e: any) {
     const msg = String(e?.message || e);
-    // Keep the toast readable — drop the long Pyodide stack when we have our RuntimeError.
     const short = msg.match(/RuntimeError: ([\s\S]+)$/)?.[1] || msg;
     throw new Error(short.slice(0, 400) || "Échec exécution Python");
   }
