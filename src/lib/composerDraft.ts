@@ -9,6 +9,7 @@ export type ComposerDraft = {
   imagePrompt: string;
   imageUrl: string | null;
   chartPayload?: unknown | null;
+  imagePython?: string | null;
   analysis?: string;
   researchLog?: unknown[];
   analysisNews?: unknown[];

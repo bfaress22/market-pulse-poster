@@ -235,16 +235,16 @@ serve(async (req) => {
 
     const sys = `Follow the user's instructions exactly. Write the LinkedIn post they asked for.
 ${skill
-  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults). Also fill the optional chart field when the skill asks for chart JSON."
+  ? "An active content skill is attached below — follow its structure, branding, and hard rules (they override generic defaults). Also fill image_python with a NEW matplotlib script adapted to this analysis (brand reference only — do not copy a fixed template)."
   : "Do not add branding, CTAs, hashtags, emojis, length rules, or structure unless the user requested them."}
-Return JSON via the write_post tool (title + content${skill ? " + chart when possible" : ""}).
+Return JSON via the write_post tool (title + content${skill ? " + image_python when possible" : ""}).
 ${tone ? `\nAutomation voice/memory from settings:\n${tone}` : ""}${skillBlock}
 ${hasAnalysis
-  ? "AN APPROVED MARKET ANALYSIS AND RESEARCH LOG ARE ATTACHED below (already researched and verified). Write ONLY from them: no new facts, no new numbers, no web knowledge. Chart rows must use pct values and levels from the research log rows only; leave out any asset without a pct."
+  ? "AN APPROVED MARKET ANALYSIS AND RESEARCH LOG ARE ATTACHED below (already researched and verified). Write ONLY from them: no new facts, no new numbers, no web knowledge. The image_python script must plot only figures from the research log; invent a layout for THIS day."
   : hasResearch
-    ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent. Chart pct/levels must come from the same research only."
-    : "Web research returned no usable snippets. Write a short honest note without inventing prices. Set chart to null."}${
-  chartOnly ? "\nCHART ONLY: the existing post is provided; keep its content exactly and focus on the chart field." : ""}`;
+    ? "WEB RESEARCH IS ATTACHED below. Ground every figure and factual claim ONLY in that research. Prefer outlets the user named. If a number is missing, omit it — never invent. image_python must use the same research only."
+    : "Web research returned no usable snippets. Write a short honest note without inventing prices. Set image_python to null."}${
+  chartOnly ? "\nIMAGE ONLY: the existing post is provided; keep its content exactly and focus on writing a fresh image_python script for it." : ""}`;
 
     const sourceBlock = hasResearch
       ? `\n\n${hasAnalysis ? "" : "--- Web research (use for facts/figures only) ---\n"}${sourceContext.substring(0, 16000)}${hasAnalysis ? "" : "\n--- End research ---"}`
@@ -252,7 +252,7 @@ ${hasAnalysis
 
     let userMsg: unknown;
     if (chartOnly && currentText) {
-      userMsg = `Existing LinkedIn post (keep as is in content):\n\n${currentText}\n\nBuild the CommoHedge chart JSON for it from the attached material.${sourceBlock}`;
+      userMsg = `Existing LinkedIn post (keep as is in content):\n\n${currentText}\n\nWrite a NEW CommoHedge matplotlib script (image_python) adapted to this analysis — brand colours/wordmark as inspiration only, invent today's layout.${sourceBlock}`;
     } else if (mode === "improve" && currentText) {
       userMsg = `Improve this LinkedIn draft according to the instructions.\n\nDraft:\n${currentText}\n\nInstructions: ${promptText || "Polish clarity and flow."}${sourceBlock}`;
     } else if (imageUrl) {
@@ -275,7 +275,7 @@ ${hasAnalysis
           function: {
             name: "write_post",
             description: skill
-              ? "Return the LinkedIn post and optional CommoHedge chart JSON"
+              ? "Return the LinkedIn post and a fresh CommoHedge matplotlib image_python script"
               : "Return the LinkedIn post",
             parameters: {
               type: "object",
@@ -284,18 +284,13 @@ ${hasAnalysis
                 content: { type: "string", description: "Full LinkedIn post body as requested" },
                 ...(skill
                   ? {
-                    chart: {
+                    image_python: {
                       anyOf: [
                         { type: "null" },
                         {
-                          type: "object",
-                          description: "Deterministic chart for the app renderer (tour or headlines). Null if no reliable % moves.",
-                          properties: {
-                            layout: { type: "string", enum: ["tour", "headlines"] },
-                            data: { type: "object" },
-                          },
-                          required: ["layout", "data"],
-                          additionalProperties: false,
+                          type: "string",
+                          description:
+                            "Brand-new matplotlib script for THIS analysis (inspiration: CommoHedge palette/wordmark only). Must savefig(OUT). Null if no reliable figures.",
                         },
                       ],
                     },
@@ -322,14 +317,16 @@ ${hasAnalysis
     const tc = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!tc) return json(500, { success: false, error: "AI returned no structured data" });
     const out = JSON.parse(tc.function.arguments);
-    const chart = out.chart && typeof out.chart === "object" && out.chart.layout && out.chart.data
-      ? out.chart
-      : null;
+    const imagePython =
+      typeof out.image_python === "string" && out.image_python.trim().length > 80
+        ? out.image_python.trim()
+        : null;
     return json(200, {
       success: true,
       title: out.title,
       content: chartOnly && typeof currentText === "string" && currentText.trim() ? currentText : out.content,
-      chart,
+      imagePython,
+      chart: null,
       usedAnalysis: hasAnalysis,
       usedSources: resolvedSources.length,
       sourceProvider,

@@ -35,7 +35,9 @@ import { loadComposerDraft, saveComposerDraft, clearComposerDraft, draftHasWork 
 import type { PostStatus } from "@/lib/publishStatus";
 import {
   isCommoHedgeChartPayload,
+  looksLikeCommoHedgePython,
   renderCommoHedgeChartBlob,
+  renderCommoHedgePythonBlob,
   type CommoHedgeChartPayload,
 } from "@/lib/commohedge-chart";
 import { uploadPostAsset } from "@/lib/storage";
@@ -79,7 +81,9 @@ const Composer = () => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [includeImage, setIncludeImage] = useState(true);
   const [chartPayload, setChartPayload] = useState<CommoHedgeChartPayload | null>(null);
-  // Step 1 output (deep research → research log → analysis). Step 2 (post + chart) is written from it.
+  // Fresh matplotlib script generated for this analysis (make_image.py = brand inspiration only).
+  const [imagePython, setImagePython] = useState("");
+  // Step 1 output (deep research → research log → analysis). Step 2 (post + image) is written from it.
   const [analysis, setAnalysis] = useState("");
   const [researchLog, setResearchLog] = useState<unknown[]>([]);
   const [analysisNews, setAnalysisNews] = useState<unknown[]>([]);
@@ -139,15 +143,12 @@ const Composer = () => {
   });
   const skillIsCommoHedge = userSettings?.active_skill === "commohedge-daily";
 
-  const applyChartFromResponse = async (raw: unknown): Promise<string | null> => {
-    if (!isCommoHedgeChartPayload(raw) || !user) return null;
-    setChartPayload(raw);
-    const blob = await renderCommoHedgeChartBlob(raw);
+  const uploadChartBlob = async (blob: Blob, label = "Image"): Promise<string | null> => {
+    if (!user) return null;
     const path = `${user.id}/${crypto.randomUUID()}.png`;
     try {
       return await uploadPostAsset(path, blob, "image/png");
     } catch (e: any) {
-      // Still show the deterministic chart locally if Storage rejects the upload.
       console.warn("chart upload failed, using data URL", e);
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -156,12 +157,28 @@ const Composer = () => {
         reader.readAsDataURL(blob);
       });
       toast({
-        title: "Chart rendu (aperçu local)",
+        title: `${label} rendue (aperçu local)`,
         description: e?.message || "Upload Storage échoué — republie après fix bucket.",
         variant: "destructive",
       });
       return dataUrl;
     }
+  };
+
+  /** Preferred path: AI-written matplotlib script (make_image.py = inspiration only). */
+  const applyPythonFromResponse = async (raw: unknown): Promise<string | null> => {
+    if (!looksLikeCommoHedgePython(raw) || !user) return null;
+    setImagePython(String(raw));
+    const blob = await renderCommoHedgePythonBlob(String(raw));
+    return uploadChartBlob(blob, "Image Python");
+  };
+
+  /** Legacy fallback: fixed tour/headlines JSON → canvas. */
+  const applyChartFromResponse = async (raw: unknown): Promise<string | null> => {
+    if (!isCommoHedgeChartPayload(raw) || !user) return null;
+    setChartPayload(raw);
+    const blob = await renderCommoHedgeChartBlob(raw);
+    return uploadChartBlob(blob, "Chart");
   };
 
   // (Image Studio is now a preferences editor — no image is sent over.)
@@ -232,6 +249,7 @@ const Composer = () => {
       setImagePrompt(draft.imagePrompt);
       setImageUrl(draft.imageUrl);
       if (isCommoHedgeChartPayload(draft.chartPayload)) setChartPayload(draft.chartPayload);
+      if (typeof draft.imagePython === "string") setImagePython(draft.imagePython);
       if (typeof draft.analysis === "string") setAnalysis(draft.analysis);
       if (Array.isArray(draft.researchLog)) setResearchLog(draft.researchLog);
       if (Array.isArray(draft.analysisNews)) setAnalysisNews(draft.analysisNews);
@@ -252,7 +270,7 @@ const Composer = () => {
     const t = window.setTimeout(() => {
       saveComposerDraft(user.id, {
         textMode, textPrompt, content, title, language, targetIds,
-        imageMode, imagePrompt, imageUrl, includeImage, chartPayload,
+        imageMode, imagePrompt, imageUrl, includeImage, chartPayload, imagePython,
         analysis, researchLog, analysisNews,
         scheduleEnabled,
         scheduleDate: scheduleDate ? scheduleDate.toISOString() : null,
@@ -262,7 +280,7 @@ const Composer = () => {
     return () => window.clearTimeout(t);
   }, [
     user, draftRestored, textMode, textPrompt, content, title, language, targetIds,
-    imageMode, imagePrompt, imageUrl, includeImage, chartPayload, analysis, researchLog, analysisNews,
+    imageMode, imagePrompt, imageUrl, includeImage, chartPayload, imagePython, analysis, researchLog, analysisNews,
     scheduleEnabled, scheduleDate,
     scheduleTime, selectedSourceIds, adhocSources, quickSubject,
   ]);
@@ -281,13 +299,26 @@ const Composer = () => {
         sources: adhocSources.map(({ type, value }) => ({ type, value })),
       },
     });
-    if (error) throw new Error(await fnErrorMessage(error, data));
-    if (!data?.success) throw new Error(data?.error || "Analyse impossible");
+    if (error) {
+      const msg = await fnErrorMessage(error, data);
+      if (/aborted|AbortError|timed out|timeout/i.test(msg)) {
+        throw new Error("Analyse trop longue (timeout). Réessaie — ou redéploie analyze-market / compose-text si ce n’est pas encore fait.");
+      }
+      throw new Error(msg);
+    }
+    if (!data?.success) {
+      const msg = String(data?.error || "Analyse impossible");
+      if (/aborted|AbortError|timed out|timeout/i.test(msg)) {
+        throw new Error("Analyse trop longue (timeout). Réessaie — ou redéploie analyze-market / compose-text si ce n’est pas encore fait.");
+      }
+      throw new Error(msg);
+    }
     setAnalysis(data.analysis || "");
     setResearchLog(Array.isArray(data.researchLog) ? data.researchLog : []);
     setAnalysisNews(Array.isArray(data.news) ? data.news : []);
     setAnalysisFor(subject);
     setChartPayload(null);
+    setImagePython("");
     return data as {
       analysis: string; researchLog: unknown[]; news: unknown[]; title?: string;
       queryCount?: number; articleCount?: number; usedFirecrawl?: boolean;
@@ -351,7 +382,22 @@ const Composer = () => {
       setContent(d.content);
       if (!title) setTitle(d.title);
       let chartNote: string | undefined;
-      if (isCommoHedgeChartPayload(d.chart)) {
+      if (looksLikeCommoHedgePython(d.imagePython)) {
+        setImagePython(d.imagePython);
+        if (includeImage && imageMode === "chart") {
+          try {
+            const url = await applyPythonFromResponse(d.imagePython);
+            if (url) {
+              setImageUrl(url);
+              chartNote = "image Python CommoHedge rendue";
+            }
+          } catch (e: any) {
+            chartNote = e?.message || "échec rendu Python";
+          }
+        } else {
+          chartNote = "script Python prêt (onglet Chart)";
+        }
+      } else if (isCommoHedgeChartPayload(d.chart)) {
         setChartPayload(d.chart);
         if (includeImage && imageMode === "chart") {
           try {
@@ -363,8 +409,6 @@ const Composer = () => {
           } catch (e: any) {
             chartNote = e?.message || "échec rendu chart";
           }
-        } else {
-          chartNote = "chart JSON prêt (onglet Chart)";
         }
       }
       toast({
@@ -414,20 +458,20 @@ const Composer = () => {
     onSettled: () => setBusy(null),
   });
 
-  // ---- Deterministic CommoHedge chart ----
+  // ---- CommoHedge image: fresh matplotlib script (brand ref only) → Pyodide ----
   const generateChart = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Non connecté");
       setBusy("chart");
-      let payload = chartPayload;
-      if (!payload) {
+      let py = imagePython;
+      if (!looksLikeCommoHedgePython(py)) {
         const subject = (textPrompt || quickSubject).trim();
         let fresh: Awaited<ReturnType<typeof runAnalysis>> | undefined;
         if (skillIsCommoHedge && analysis.trim().length <= 100) fresh = await runAnalysis(subject);
         const { data, error } = await supabase.functions.invoke("compose-text", {
           body: {
             prompt: subject || content.substring(0, 500) ||
-              "Build the LinkedIn post AND the CommoHedge chart JSON from the analysis.",
+              "Write the LinkedIn post AND a NEW CommoHedge matplotlib script adapted to this analysis.",
             currentText: content || undefined,
             mode: "create",
             chartOnly: !!content.trim(),
@@ -441,20 +485,25 @@ const Composer = () => {
         if (!data?.success) throw new Error(data?.error || "Failed");
         if (data.content) setContent(data.content);
         if (data.title && !title) setTitle(data.title);
-        if (!isCommoHedgeChartPayload(data.chart)) {
-          throw new Error("Aucun chart fiable (chiffres manquants dans la recherche).");
+        if (looksLikeCommoHedgePython(data.imagePython)) {
+          py = data.imagePython;
+        } else if (isCommoHedgeChartPayload(data.chart)) {
+          const url = await applyChartFromResponse(data.chart);
+          if (!url) throw new Error("Rendu chart impossible");
+          return url;
+        } else {
+          throw new Error("Aucun script image fiable (chiffres manquants dans la recherche).");
         }
-        payload = data.chart;
       }
-      const url = await applyChartFromResponse(payload);
-      if (!url) throw new Error("Rendu chart impossible");
+      const url = await applyPythonFromResponse(py);
+      if (!url) throw new Error("Rendu Python impossible");
       return url;
     },
     onSuccess: (url) => {
       setImageUrl(url);
-      toast({ title: "Chart CommoHedge rendu ✨" });
+      toast({ title: "Image CommoHedge rendue ✨" });
     },
-    onError: (e: any) => toast({ title: "Erreur chart", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Erreur image", description: e.message, variant: "destructive" }),
     onSettled: () => setBusy(null),
   });
 
@@ -499,7 +548,17 @@ const Composer = () => {
         setContent(data.content);
         if (!title) setTitle(data.title);
         textOk = true;
-        if (includeImage && useChart && isCommoHedgeChartPayload(data.chart)) {
+        if (includeImage && useChart && looksLikeCommoHedgePython(data.imagePython)) {
+          try {
+            const url = await applyPythonFromResponse(data.imagePython);
+            if (url) {
+              setImageUrl(url);
+              imgOk = true;
+            }
+          } catch (e: any) {
+            firstError = e?.message || "Échec rendu Python";
+          }
+        } else if (includeImage && useChart && isCommoHedgeChartPayload(data.chart)) {
           try {
             const url = await applyChartFromResponse(data.chart);
             if (url) {
@@ -510,7 +569,7 @@ const Composer = () => {
             firstError = e?.message || "Échec rendu chart";
           }
         } else if (includeImage && useChart) {
-          firstError = "Chart indisponible (pas assez de chiffres sourcés)";
+          firstError = "Image indisponible (pas assez de chiffres sourcés)";
         }
       } else {
         firstError = await fnErrorMessage(error, data);
@@ -1068,13 +1127,21 @@ const Composer = () => {
                 {imageMode === "chart" ? (
                   <div className="space-y-2">
                     <p className="text-[11px] text-muted-foreground">
-                      Charte déterministe CommoHedge 1600×900 (layouts tour / headlines) à partir des chiffres du skill — pas d’image IA.
-                      {skillIsCommoHedge ? " Skill actif." : " Active le skill CommoHedge dans Settings pour un chart auto à la génération texte."}
+                      Pour chaque analyse l’IA écrit un <strong>nouveau</strong> script matplotlib 1600×900 (palette CommoHedge en référence, pas un template fixe). Exécuté dans le navigateur.
+                      {skillIsCommoHedge ? " Skill actif." : " Active le skill CommoHedge dans Settings."}
                     </p>
-                    {chartPayload && (
+                    {imagePython && (
                       <Badge variant="secondary" className="text-[10px]">
-                        JSON prêt · {chartPayload.layout}
+                        Script Python prêt · {imagePython.length} car.
                       </Badge>
+                    )}
+                    {imagePython && (
+                      <Textarea
+                        value={imagePython}
+                        onChange={(e) => setImagePython(e.target.value)}
+                        rows={8}
+                        className="bg-background/40 font-mono text-[11px]"
+                      />
                     )}
                     <div className="flex gap-2">
                       <Button
@@ -1083,7 +1150,7 @@ const Composer = () => {
                         className="bg-gradient-to-r from-primary to-accent text-white"
                       >
                         {busy === "chart" ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
-                        {imageUrl ? "Re-rendre le chart" : "Générer le chart"}
+                        {imageUrl ? "Re-générer l'image" : "Générer l'image"}
                       </Button>
                       {imageUrl && (
                         <Button variant="outline" onClick={() => setImageUrl(null)}>

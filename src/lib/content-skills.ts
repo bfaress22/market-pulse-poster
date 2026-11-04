@@ -20,7 +20,7 @@ export const CONTENT_SKILLS: ContentSkillMeta[] = [
     slug: "commohedge-daily",
     name: "CommoHedge daily",
     description:
-      "Analyse commodities, posts LinkedIn EN, chartes déterministes CommoHedge (tour/headlines) + palette #0C1322 / lime.",
+      "Analyse commodities, posts LinkedIn EN, image matplotlib générée à neuf (charte CommoHedge en référence).",
     imageBrand: {
       background: "#0C1322",
       card: "#131D30",

@@ -72,8 +72,9 @@ function buildQueries(focus: string, extraKeywords: string[], dateText: string):
     .trim()
     .slice(0, 110);
   if (cleanFocus.length >= 8) queries.push(`${cleanFocus} ${sites}`);
-  for (const k of extraKeywords.slice(0, 2)) queries.push(k.slice(0, 160));
-  return queries.slice(0, 9);
+  for (const k of extraKeywords.slice(0, 1)) queries.push(k.slice(0, 160));
+  // Cap at 5: leave most of the ~150s edge wall-clock for the analysis LLM call.
+  return queries.slice(0, 5);
 }
 
 async function gatherMarketResearch(opts: {
@@ -90,8 +91,8 @@ async function gatherMarketResearch(opts: {
   const results = await Promise.all(
     queries.map((q) =>
       withTimeout(
-        searchKeyword(q, opts.firecrawlKey, 4).catch(() => [] as SearchHit[]),
-        25000,
+        searchKeyword(q, opts.firecrawlKey, 3).catch(() => [] as SearchHit[]),
+        12000,
         [] as SearchHit[],
       )
     ),
@@ -121,18 +122,18 @@ async function gatherMarketResearch(opts: {
     ...ranked
       .map((h) => h.url)
       .filter((u) => /^https?:\/\//i.test(u) && !/google\.com\/search|duckduckgo\.com/i.test(u))
-      .slice(0, 6),
+      .slice(0, 3),
   ];
-  const uniqueScrape = [...new Set(toScrape)].slice(0, 8);
+  const uniqueScrape = [...new Set(toScrape)].slice(0, 3);
   const articles: string[] = [];
   await withTimeout(
     Promise.all(uniqueScrape.map(async (url) => {
       try {
-        const md = await withTimeout(scrapeUrl(url, opts.firecrawlKey), 20000, null);
-        if (md && md.length > 150 && /\d/.test(md)) articles.push(`# Article: ${url}\n\n${md.substring(0, 2600)}`);
+        const md = await withTimeout(scrapeUrl(url, opts.firecrawlKey), 8000, null);
+        if (md && md.length > 150 && /\d/.test(md)) articles.push(`# Article: ${url}\n\n${md.substring(0, 1600)}`);
       } catch { /* ignore */ }
     })),
-    26000,
+    12000,
     [],
   );
 
@@ -141,11 +142,19 @@ async function gatherMarketResearch(opts: {
   if (chunks.length) parts.push(chunks.join("\n\n---\n\n"));
   if (articles.length) parts.push(articles.join("\n\n---\n\n"));
   return {
-    context: parts.join("\n\n=====\n\n").substring(0, 26000),
+    // Keep context compact so the analysis LLM answers before the edge wall-clock.
+    context: parts.join("\n\n=====\n\n").substring(0, 14000),
     queryCount: queries.length,
     hitCount,
     articleCount: articles.length,
   };
+}
+
+function isAbortError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const name = (e as { name?: string }).name || "";
+  const msg = String((e as { message?: string }).message || "");
+  return name === "AbortError" || /aborted|AbortError/i.test(msg);
 }
 
 async function callTool(
@@ -153,7 +162,7 @@ async function callTool(
   system: string,
   user: string,
   tool: { name: string; description: string; parameters: Record<string, unknown> },
-  timeoutMs = 100000,
+  timeoutMs = 110000,
 ): Promise<Record<string, unknown>> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -177,6 +186,11 @@ async function callTool(
     const tc = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!tc) throw new Error("AI returned no structured data");
     return JSON.parse(tc.function.arguments);
+  } catch (e) {
+    if (isAbortError(e)) {
+      throw new Error(`Market analysis timed out after ${Math.round(timeoutMs / 1000)}s (model too slow or research too heavy). Retry or switch model.`);
+    }
+    throw e;
   } finally {
     clearTimeout(t);
   }
@@ -251,13 +265,13 @@ HARD RULES
 - Ignore social media, forums, blogs, SEO "price today" pages and anything without a visible date.
 ${hasResearch ? "" : "- Web research returned nothing usable: return an empty research_log and a one-paragraph analysis saying live data was unavailable."}
 
-ANALYSIS STRUCTURE (350-600 words, plain English, short sentences, no hype, no emojis)
+ANALYSIS STRUCTURE (250-400 words, plain English, short sentences, no hype, no emojis)
 - One-sentence summary of the day's main tension.
 - Main news (facts + source).
-- One short section per asset group that has fresh data (oil, gas, precious metals, base metals, agriculture, macro/FX): the facts, then the mechanism.
-- Big picture: how the moves connect (opposing forces, one driver vs physical supply, etc.).
+- Short sections only for asset groups with fresh data (oil, gas, precious, base metals, agri, macro/FX).
+- One short big-picture paragraph on how the moves connect.
 - What to watch: dated catalysts only if they appear in the research.
-Cite the outlet and date inline in brackets. If a group has no fresh figures, skip it instead of padding.`;
+Cite the outlet and date inline in brackets. Skip empty groups. Be concise — prefer a complete short analysis over a long one.`;
 }
 
 export async function runMarketAnalysis(opts: {
@@ -267,6 +281,7 @@ export async function runMarketAnalysis(opts: {
   extraSources?: SourceInput[];
 }): Promise<MarketAnalysis> {
   const dateText = todayLabel();
+  const started = Date.now();
   const research = await gatherMarketResearch({
     focus: opts.focus || "",
     extraSources: opts.extraSources || [],
@@ -281,7 +296,16 @@ export async function runMarketAnalysis(opts: {
       : "No usable web research was found."
   }`;
 
-  const out = await callTool(opts.provider, analysisSystemPrompt(dateText, hasResearch), user, ANALYSIS_TOOL);
+  // Dynamic LLM budget: keep ~10s safety under a 150s edge wall-clock.
+  const elapsed = Date.now() - started;
+  const llmBudget = Math.max(50000, Math.min(110000, 140000 - elapsed));
+  const out = await callTool(
+    opts.provider,
+    analysisSystemPrompt(dateText, hasResearch),
+    user,
+    ANALYSIS_TOOL,
+    llmBudget,
+  );
   const log = Array.isArray(out.research_log) ? (out.research_log as ResearchLogRow[]) : [];
   const news = Array.isArray(out.news) ? (out.news as NewsItem[]) : [];
   return {

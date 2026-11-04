@@ -47,11 +47,17 @@ LINKEDIN POST STRUCTURE (English, 200–280 words unless the user asks otherwise
 6. Sources line, then: For information only, not investment advice.
 7. 6–10 relevant hashtags (#Commodities #Oil #NaturalGas #Gold #Copper #Hedging #RiskManagement …).
 
-CHART JSON (required in the tool field "chart" when this skill is active)
-Return a deterministic CommoHedge chart payload used by the app renderer (not AI image gen).
-- layout "tour" (default daily board): news[4] {tag, text with \\n}, groups[4] in order Energy / Precious metals / Base metals / Agriculture, each rows[{name, level, pct, hatched}]. hatched=true for intraday. Only plot % you have in research; empty rows only if needed to keep 4 groups — prefer fewer rows with real numbers. title ~55 chars, subtitle with date, tag lime context, footer_lines with sources + "Not investment advice".
-- layout "headlines" when 3–4 shocks dominate: cards[4], moves.rows, radar.items — same rigor, no invented %.
-If research has no usable commodity % moves, set chart to null (do not invent bars).
+IMAGE PYTHON (required in the tool field "image_python" when this skill is active)
+Write a BRAND-NEW matplotlib script for THIS analysis — never reuse a fixed tour/headlines/weekly template.
+The reference renderer (make_image.py) is INSPIRATION ONLY: brand colours, wordmark, footer habits. Invent a layout that best tells today's story (big-number cards, custom bars, timeline, 2×2 shocks, single-asset deep dive, mixed board…).
+
+Hard contract for the script:
+- Self-contained Python 3. OUT, NAVY, CARD, LIME, WHITE, GREY, DGREY, RED, CYAN, MID are predefined. Save with: plt.savefig(OUT, dpi=100, facecolor=NAVY)
+- Canvas: figsize=(16, 9) → 1600×900 PNG. Background NAVY #0C1322, cards CARD #131D30, accent LIME #A6FF00, text WHITE, secondary GREY #8FA0B5, down RED #FF4D5E, cyan #4DD9E6.
+- Top-left wordmark "COMMO" white + "HEDGE" lime; lime context tag top-right; footer sources + "Not investment advice" + WWW.COMMOHEDGE.COM in lime.
+- Escape every "$" in matplotlib strings as "\\$". Mark intraday / unverified with hatch or hollow markers and say so in subtitle/footer.
+- Plot ONLY figures present in the research log / analysis. No placeholders. If no reliable visual numbers, set image_python to null.
+- Do NOT paste the reference tour/headlines layout verbatim — adapt composition, labels and hierarchy to this day's analysis.
 
 STYLE
 Clear, direct, no jargon, no hype, no emojis. Short sentences. Prefer opposing-forces framing and physical asymmetries when true.

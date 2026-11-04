@@ -10,6 +10,12 @@ verify_jwt = false
 [functions.run-topic-queue]
 verify_jwt = false
 
+[functions.analyze-market]
+verify_jwt = true
+
+[functions.compose-text]
+verify_jwt = true
+
 [functions.setup-automation]
 verify_jwt = true
 

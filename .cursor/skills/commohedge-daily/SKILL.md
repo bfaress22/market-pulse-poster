@@ -86,13 +86,16 @@ Style: clear, direct, no jargon, no hype, no emojis. Short sentences. **200–28
 
 ### 5. Image (when requested)
 
-Build with [scripts/make_image.py](scripts/make_image.py) (layouts `tour`, `headlines`, `weekly`). Read [references/image-spec.md](references/image-spec.md), write JSON from the research log, run the script, view the PNG and fix overlaps before presenting.
+[scripts/make_image.py](scripts/make_image.py) and [references/image-spec.md](references/image-spec.md) are **brand inspiration only** (palette, wordmark, footer habits). Do **not** paste a fixed `tour` / `headlines` / `weekly` template.
 
-- Size: **1600×900 PNG**, matplotlib, **dpi=100**
+For each analysis, write a **brand-new** matplotlib script adapted to that day's story (layout invented for the research log), then run it, view the PNG and fix overlaps before presenting.
+
+- Size: **1600×900 PNG**, matplotlib, **dpi=100**, `figsize=(16, 9)`
+- Brand: navy `#0C1322`, cards `#131D30`, lime `#A6FF00`, COMMO white + HEDGE lime, footer `WWW.COMMOHEDGE.COM`
 - **Reuse only** research log + LinkedIn post. Do **not** web-search new figures for the chart.
 - Mark intraday with hatched bars / hollow markers; note in subtitle/footer
 - Escape `$` in matplotlib text as `\$`
-- Present PNG + data JSON; never plot a value absent from the research log
+- Present the PNG (+ the Python you wrote). Never plot a value absent from the research log.
 
 ### 6. Points à vérifier avant de publier
 
